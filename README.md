@@ -187,3 +187,47 @@ Original paper by Olaf Ronneberger, Philipp Fischer, Thomas Brox:
 [U-Net: Convolutional Networks for Biomedical Image Segmentation](https://arxiv.org/abs/1505.04597)
 
 ![network architecture](https://i.imgur.com/jeDVpqF.png)
+
+
+## HPCC Specific Instructions
+
+To find available Python versions do:
+```
+module spider Python
+```
+After selecting a version, say `Python/3.10.4`, to find out how to load it do:
+```
+module spider Python/3.10.4
+```
+
+## Steps for installation
+
+1. Load modules:
+```
+module purge
+module load GCCcore/11.3.0
+module load Python/3.10.4
+module load CUDA/11.6.0
+```
+2. Create a virtual environment and then activate it.  Note: always module load the correct Python first.
+
+3. Install Pytorch:
+```
+pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu116
+```
+4. Then install packages:
+```
+python -m pip install matplotlib numpy Pillow tqdm wandb
+```
+
+## Steps for Running
+1. Load modules:
+```
+module purge
+module load GCCcore/11.3.0
+module load Python/3.10.4
+module load cuDNN/8.4.1.50-CUDA-11.6.0
+```
+2. Activate virtual environment
+
+
