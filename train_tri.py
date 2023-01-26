@@ -24,7 +24,8 @@ from image_dataset import image_dataset
 
 #dir_img = Path('./data/imgs/')
 #dir_mask = Path('./data/masks/')
-datafile = 'D:/Data/Triangles/set1000.h5'
+#datafile = 'D:/Data/Triangles/set1000.h5'
+datafile = '/mnt/home/dmorris/Data/Triangles/set1000.h5'
 dir_checkpoint = Path('./checkpoints/')
 
 
@@ -170,7 +171,7 @@ def train_model(
         if save_checkpoint:
             Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
             state_dict = model.state_dict()
-            state_dict['mask_values'] = dataset.mask_values
+            # state_dict['mask_values'] = dataset.mask_values
             torch.save(state_dict, str(dir_checkpoint / 'checkpoint_epoch{}.pth'.format(epoch)))
             logging.info(f'Checkpoint {epoch} saved!')
 
