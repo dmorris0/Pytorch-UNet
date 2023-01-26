@@ -16,7 +16,7 @@ def evaluate_bce(net, dataloader, device, criterion, amp):
     # iterate over the validation set
     with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=amp):
         for batch in tqdm(dataloader, total=num_val_batches, desc='Validation round', unit='batch', leave=False):
-            image, mask_true = batch['image'], batch['targets']
+            image, mask_true, centers, ncen = batch['image'], batch['targets'], batch['centers'], batch['ncen']
 
             # move images and labels to correct device and type
             image = image.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
