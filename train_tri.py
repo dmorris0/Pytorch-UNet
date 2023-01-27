@@ -25,11 +25,14 @@ dataset_path = os.path.join( os.path.dirname(dirname), 'cvdemos', 'image')
 sys.path.append(dataset_path)
 from image_dataset import ImageData
 
-#dir_img = Path('./data/imgs/')
-#dir_mask = Path('./data/masks/')
-datafile = 'D:/Data/Triangles/set10.h5'
-#datafile = 'D:/Data/Triangles/set1000.h5'
-#datafile = '/mnt/home/dmorris/Data/Triangles/set1000.h5'
+if os.name == 'nt':
+    datadir = 'D:/Data/Triangles'
+else:
+    datadir = '/mnt/home/dmorris/Data/Triangles'
+
+datafile = os.path.join(datadir, 'set10.h5')
+#datafile = os.path.join(datadir, 'set1000.h5')
+
 dir_checkpoint = Path(os.path.join(dirname,'checkpoints/'))
 
 
@@ -152,7 +155,7 @@ def train_model(
                             if not torch.isinf(value.grad).any():
                                 histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
 
-                        val_score, val_dice, val_pr, val_re = evaluate_bce(model, val_loader, device, criterion, amp)
+                        val_score, val_dice, val_pr, val_re = evaluate_bce(model, val_loader, device, criterion, amp, f'val_epoch_{epoch}.h5')
                         scheduler.step(val_dice)
 
                         logging.info(f'Validation Loss {val_score:.3f}, Dice {val_dice:.3f}, Pr {val_pr:.3f}, Re {val_re:.3f}')

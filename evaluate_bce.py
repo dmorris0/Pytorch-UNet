@@ -4,21 +4,63 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 import numpy as np
+import h5py
 import sys
 sys.path.append('../cvdemos/image')
 from heatmap_score import Peaks, MatchScore
 
 # from utils.dice_score import multiclass_dice_coeff, dice_coeff
 
+class SaveResults:
+
+    def __init__(self, h5filename, batch, N):
+
+        if h5filename:
+            self.hf = h5py.File(h5filename, 'w')
+        else:
+            self.hf = None
+            return
+        group = self.hf.create_group('run')
+        imshape = (N, batch['image'].shape[2:], batch['image'].shape[1])
+        centershape = (N, batch['centers'].shape[2:])
+        nshape = (N,)
+        heatshape = (N, batch['image'].shape[2:])
+        scoreshape = (N, 3)
+
+        group.create_dataset('images', shape=imshape, dtype='u1', compression='lzf')
+        group.create_dataset('centers', shape=centershape, dtype='i8' )
+        group.create_dataset('nobj', shape=nshape, dtype='i8' )
+        group.create_dataset('heatmap',shape=heatshape, dtype='f4')               
+        group.create_dataset('scores',shape=scoreshape, dtype='i8' )             
+
+        self.group = group
+        self.index=0    
+    
+    def add(self, images, centers, ncens, mask_preds, scores):
+        if not self.hf is None:
+            for img, cens, ncen, preds, iscores in zip(images.cpu().numpy(), centers.cpu().numpy(), ncens.cpu().numpy(), mask_preds.cpu().numpy(), scores.cpu().numpy()):
+                self.group['images'][self.index] = (img.transpose((1,2,0))*255).astype(np.uint8)
+                self.group['centers'][self.index] = cens[0]
+                self.group['nobj'][self.index] = ncen[0]
+                self.group['heatmap'][self.index] = preds[0].astype(np.float32)
+                self.group['scores'][self.index] = iscores
+                self.index += 1        
+
+    def __del__(self):
+        ''' Close the file when delete the class '''
+        if not self.hf is None:
+            self.hf.close()
 
 @torch.inference_mode()
-def evaluate_bce(net, dataloader, device, criterion, amp):
+def evaluate_bce(net, dataloader, device, criterion, amp, h5filename=None):
     net.eval()
     num_val_batches = len(dataloader)
     bce = 0
     scores = np.zeros( (3,) )
     peaks = Peaks(1, device)
     matches = MatchScore(max_distance=5)
+
+    save = SaveResults(h5filename=h5filename)
 
     # iterate over the validation set
     with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=amp):
@@ -34,7 +76,11 @@ def evaluate_bce(net, dataloader, device, criterion, amp):
             mask_pred = net(image)
 
             detections = peaks.peak_coords( mask_pred, min_val=0.)
-            scores += matches.calc_match_scores( detections, centers, ncen )
+            bscores = matches.calc_match_scores( detections, centers, ncen )
+
+            save.add( image, centers, ncen, bscores)
+
+            score += bscores.sum(axis=0)
 
             if net.n_classes == 1:
                 assert mask_true.min() >= 0 and mask_true.max() <= 1, 'True mask indices should be in [0, 1]'
