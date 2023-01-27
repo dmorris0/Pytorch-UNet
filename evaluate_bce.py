@@ -59,8 +59,9 @@ def evaluate_bce(net, dataloader, device, criterion, amp, h5filename=None):
     scores = np.zeros( (3,) )
     peaks = Peaks(1, device)
     matches = MatchScore(max_distance=5)
-
-    save = SaveResults(h5filename=h5filename)
+    save = None    
+    N = len(dataloader)
+    print('N',N)
 
     # iterate over the validation set
     with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=amp):
@@ -78,6 +79,8 @@ def evaluate_bce(net, dataloader, device, criterion, amp, h5filename=None):
             detections = peaks.peak_coords( mask_pred, min_val=0.)
             bscores = matches.calc_match_scores( detections, centers, ncen )
 
+            if save is None:
+                save = SaveResults(h5filename=h5filename, batch=batch, N=N)
             save.add( image, centers, ncen, bscores)
 
             score += bscores.sum(axis=0)
