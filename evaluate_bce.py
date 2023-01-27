@@ -3,6 +3,10 @@
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
+import numpy as np
+import sys
+sys.path.append('../cvdemos/image')
+from heatmap_score import Peaks, MatchScore
 
 # from utils.dice_score import multiclass_dice_coeff, dice_coeff
 
@@ -12,6 +16,9 @@ def evaluate_bce(net, dataloader, device, criterion, amp):
     net.eval()
     num_val_batches = len(dataloader)
     bce = 0
+    scores = np.zeros( (3,) )
+    peaks = Peaks(1, device)
+    matches = MatchScore(max_distance=5)
 
     # iterate over the validation set
     with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=amp):
@@ -26,10 +33,14 @@ def evaluate_bce(net, dataloader, device, criterion, amp):
             # predict the mask
             mask_pred = net(image)
 
+            detections = peaks.peak_coords( mask_pred, min_val=0.)
+            scores += matches.calc_match_scores( detections, centers, ncen )
+
             if net.n_classes == 1:
                 assert mask_true.min() >= 0 and mask_true.max() <= 1, 'True mask indices should be in [0, 1]'
 
                 bce += criterion(mask_pred, mask_true)
+
                 # mask_pred = (F.sigmoid(mask_pred) > 0.5).float()
                 # compute the Dice score
                 #dice_score += dice_coeff(mask_pred, mask_true, reduce_batch_first=False)
@@ -42,4 +53,9 @@ def evaluate_bce(net, dataloader, device, criterion, amp):
                 #dice_score += multiclass_dice_coeff(mask_pred[:, 1:], mask_true[:, 1:], reduce_batch_first=False)
 
     net.train()
-    return bce / max(num_val_batches, 1)
+
+    dice = 2*scores[0] / (scores[0]+scores.sum())
+    precision = scores[0]/ (scores[0]+scores[1])
+    recall = scores[0]/ (scores[0]+scores[2])
+
+    return bce / max(num_val_batches, 1), dice, precision, recall
