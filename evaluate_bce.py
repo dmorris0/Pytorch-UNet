@@ -13,38 +13,41 @@ from heatmap_score import Peaks, MatchScore
 
 class SaveResults:
 
-    def __init__(self, h5filename, batch, N):
+    def __init__(self, h5filename, batch, Nb, name="validation"):
 
         if h5filename:
             self.hf = h5py.File(h5filename, 'w')
         else:
             self.hf = None
             return
-        group = self.hf.create_group('run')
-        imshape = (N, batch['image'].shape[2:], batch['image'].shape[1])
-        centershape = (N, batch['centers'].shape[2:])
+        group = self.hf.create_group(name)
+        N = Nb * batch['image'].shape[0]  # Total number of images
+        imshape = (N, batch['image'].shape[2], batch['image'].shape[3], batch['image'].shape[1])
+        centershape = (N, batch['centers'].shape[2], 2)
         nshape = (N,)
-        heatshape = (N, batch['image'].shape[2:])
-        scoreshape = (N, 3)
+        heatshape = (N, batch['image'].shape[2], batch['image'].shape[3])
+        scoreshape = (N, 3)        
 
         group.create_dataset('images', shape=imshape, dtype='u1', compression='lzf')
         group.create_dataset('centers', shape=centershape, dtype='i8' )
         group.create_dataset('nobj', shape=nshape, dtype='i8' )
         group.create_dataset('heatmap',shape=heatshape, dtype='f4')               
         group.create_dataset('scores',shape=scoreshape, dtype='i8' )             
+        group.create_dataset('params',shape=(2,), dtype='f4')
 
         self.group = group
         self.index=0    
     
-    def add(self, images, centers, ncens, mask_preds, scores):
+    def add(self, images, centers, ncens, mask_preds, scores, min_val, max_distance):
         if not self.hf is None:
-            for img, cens, ncen, preds, iscores in zip(images.cpu().numpy(), centers.cpu().numpy(), ncens.cpu().numpy(), mask_preds.cpu().numpy(), scores.cpu().numpy()):
+            for img, cens, ncen, preds, iscores in zip(images.cpu().numpy(), centers.cpu().numpy(), ncens.cpu().numpy(), mask_preds.cpu().numpy(), scores):
                 self.group['images'][self.index] = (img.transpose((1,2,0))*255).astype(np.uint8)
                 self.group['centers'][self.index] = cens[0]
                 self.group['nobj'][self.index] = ncen[0]
                 self.group['heatmap'][self.index] = preds[0].astype(np.float32)
                 self.group['scores'][self.index] = iscores
                 self.index += 1        
+            self.group['params'][:] = np.array( [min_val, max_distance]).astype(np.float32)
 
     def __del__(self):
         ''' Close the file when delete the class '''
@@ -58,10 +61,11 @@ def evaluate_bce(net, dataloader, device, criterion, amp, h5filename=None):
     bce = 0
     scores = np.zeros( (3,) )
     peaks = Peaks(1, device)
-    matches = MatchScore(max_distance=5)
+    min_val = 0.
+    max_distance = 8
+    matches = MatchScore(max_distance=max_distance)
     save = None    
-    N = len(dataloader)
-    print('N',N)
+    Nb = len(dataloader)
 
     # iterate over the validation set
     with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=amp):
@@ -80,10 +84,10 @@ def evaluate_bce(net, dataloader, device, criterion, amp, h5filename=None):
             bscores = matches.calc_match_scores( detections, centers, ncen )
 
             if save is None:
-                save = SaveResults(h5filename=h5filename, batch=batch, N=N)
-            save.add( image, centers, ncen, bscores)
+                save = SaveResults(h5filename=h5filename, batch=batch, Nb=Nb)
+            save.add( image, centers, ncen, torch.sigmoid(mask_pred), bscores, torch.sigmoid(torch.Tensor([min_val])).item(), max_distance )
 
-            score += bscores.sum(axis=0)
+            scores += bscores.sum(axis=0)
 
             if net.n_classes == 1:
                 assert mask_true.min() >= 0 and mask_true.max() <= 1, 'True mask indices should be in [0, 1]'

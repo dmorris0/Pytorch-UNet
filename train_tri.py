@@ -12,6 +12,7 @@ from pathlib import Path
 from torch import optim
 from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
+import numpy as np
 
 import wandb
 from evaluate_bce import evaluate_bce
@@ -24,6 +25,7 @@ dataset_path = os.path.join( os.path.dirname(dirname), 'cvdemos', 'image')
 
 sys.path.append(dataset_path)
 from image_dataset import ImageData
+from synth_data import DrawData
 
 if os.name == 'nt':
     datadir = 'D:/Data/Triangles'
@@ -34,7 +36,8 @@ datafile = os.path.join(datadir, 'set10.h5')
 #datafile = os.path.join(datadir, 'set1000.h5')
 
 dir_checkpoint = Path(os.path.join(dirname,'checkpoints/'))
-
+dir_output = os.path.join(dirname,'output')
+os.makedirs(dir_output,exist_ok=True)
 
 def train_model(
         model,
@@ -56,7 +59,7 @@ def train_model(
     n_train, n_val = len(train_set), len(val_set)
 
     # 3. Create data loaders
-    loader_args = dict(batch_size=batch_size, num_workers=os.cpu_count(), pin_memory=True)
+    loader_args = dict(batch_size=batch_size, num_workers=np.maximum(8,os.cpu_count()), pin_memory=True)
     train_loader = DataLoader(train_set, shuffle=True, **loader_args)
     val_loader = DataLoader(val_set, shuffle=False, drop_last=True, **loader_args)
 
@@ -155,7 +158,7 @@ def train_model(
                             if not torch.isinf(value.grad).any():
                                 histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
 
-                        val_score, val_dice, val_pr, val_re = evaluate_bce(model, val_loader, device, criterion, amp, f'val_epoch_{epoch}.h5')
+                        val_score, val_dice, val_pr, val_re = evaluate_bce(model, val_loader, device, criterion, amp, os.path.join(dir_output,f'val_epoch_{epoch}.h5') )
                         scheduler.step(val_dice)
 
                         logging.info(f'Validation Loss {val_score:.3f}, Dice {val_dice:.3f}, Pr {val_pr:.3f}, Re {val_re:.3f}')
@@ -175,6 +178,7 @@ def train_model(
                             })
                         except:
                             pass
+
 
         if save_checkpoint:
             Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
