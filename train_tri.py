@@ -54,7 +54,8 @@ def train_model(
         weight_decay: float = 1e-8,
         momentum: float = 0.999,
         gradient_clipping: float = 1.0,
-        focal_loss_ag: tuple = (0.25, 2.0), # None,  # or tuple = (0.25, 2.0)
+        focal_loss_ag: tuple = (0.25, 2.0), # None,  # or tuple = (0.25, 2.0),
+        dilate: int = 0,
 ):
 
     # 1. Create dataset
@@ -62,7 +63,7 @@ def train_model(
     n_train, n_val = len(train_set), len(val_set)
 
     # 3. Create data loaders
-    loader_args = dict(batch_size=batch_size, num_workers=np.maximum(8,os.cpu_count()), pin_memory=True)
+    loader_args = dict(batch_size=batch_size, num_workers=np.minimum(8,os.cpu_count()), pin_memory=True)
     train_loader = DataLoader(train_set, shuffle=True, **loader_args)
     val_loader = DataLoader(val_set, shuffle=False, drop_last=True, **loader_args)
 
@@ -88,6 +89,8 @@ def train_model(
         Device:          {device.type}
         Images scaling:  {img_scale}
         Mixed Precision: {amp}
+        Focal Loss:      {focal_loss_ag}
+        Dilate:          {dilate}
     ''')
 
     # 4. Set up the optimizer, the loss, the learning rate scheduler and the loss scaling for AMP
@@ -98,6 +101,7 @@ def train_model(
 
     # Find positive weights for single-pixel positives:
     pos_weight = torch.Tensor([train_set.pos_weight]).to(device)
+    print('Pos Weight:', train_set.pos_weight)
     if focal_loss_ag is None:
         criterion = nn.CrossEntropyLoss() if model.n_classes > 1 else nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     else:
@@ -159,8 +163,8 @@ def train_model(
                 pbar.set_postfix(**{'loss (batch)': loss.item()})
 
                 # Evaluation round
-                #division_step = (n_train // (5 * batch_size))
-                division_step = len(train_loader)
+                #division_step = (n_train // (10 * batch_size))
+                division_step = len(train_loader)//4
                 if division_step > 0:
                     if global_step % division_step == 0:
                         histograms = {}
@@ -222,7 +226,7 @@ class Args():
     def __init__(self,
                  run: int = -1,
                  input_data: str = 'set10.h5',
-                 epochs: int = 5,
+                 epochs: int = 10,
                  batch_size: int = 4,
                  lr: float = 1e-5,
                  load: str = False,     # load model from a .pth file
@@ -230,7 +234,8 @@ class Args():
                  amp: bool = False,     # Use mixed precision
                  convtrans: bool = False,  #use transpose convolution instead of bilinear upsampling
                  classes: int = 1,      # Number of classes
-                 focal_loss_ag: tuple = (0.25, 2.0)  # None for no focal loss
+                 focal_loss_ag: tuple = (0.25, 2.0),  # None for no focal loss
+                 dilate: int = 0,
                  ):
         self.run = run
         self.input_data = input_data
@@ -243,15 +248,29 @@ class Args():
         self.convtrans = convtrans
         self.classes = classes
         self.focal_loss_ag = focal_loss_ag
+        self.dilate = dilate
 
 
 if __name__ == '__main__':
     # args = get_args()
-    run = 1
-    if run==1:
-        args = Args(input_data='set10.h5', focal_loss_ag=None)
-    elif run==2:
-        args = Args(input_data='set10.h5', focal_loss_ag=None)
+
+    start = 4
+    end = 7
+    for run in range(start, end+1):
+        if run==1:
+            args = Args(input_data='set10.h5', focal_loss_ag=None)
+        elif run==2:
+            args = Args(input_data='set10.h5', focal_loss_ag=(0.25,2.0))
+        elif run==3:
+            args = Args(input_data='set2000.h5', focal_loss_ag=(0.25,2.0))
+        elif run==4:
+            args = Args(input_data='set2000.h5', focal_loss_ag=None,       dilate=0)
+        elif run==5:
+            args = Args(input_data='set2000.h5', focal_loss_ag=(0.99,2.0), dilate=0)
+        elif run==6:
+            args = Args(input_data='set2000.h5', focal_loss_ag=(0.99,4.0), dilate=0)
+        elif run==7:
+            args = Args(input_data='set2000.h5', focal_loss_ag=(0.9,4.0),  dilate=0)
 
 
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
