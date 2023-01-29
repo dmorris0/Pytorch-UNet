@@ -55,11 +55,11 @@ def train_model(
         momentum: float = 0.999,
         gradient_clipping: float = 1.0,
         focal_loss_ag: tuple = (0.25, 2.0), # None,  # or tuple = (0.25, 2.0),
-        dilate: int = 0,
+        dilate: float = 0.,
 ):
 
     # 1. Create dataset
-    train_set, val_set = ImageData(datafile,'train'), ImageData(datafile,'validation')
+    train_set, val_set = ImageData(datafile,'train',radius=dilate), ImageData(datafile,'validation',radius=dilate)
     n_train, n_val = len(train_set), len(val_set)
 
     # 3. Create data loaders
@@ -235,7 +235,7 @@ class Args():
                  convtrans: bool = False,  #use transpose convolution instead of bilinear upsampling
                  classes: int = 1,      # Number of classes
                  focal_loss_ag: tuple = (0.25, 2.0),  # None for no focal loss
-                 dilate: int = 0,
+                 dilate: float = 0.,
                  ):
         self.run = run
         self.input_data = input_data
@@ -264,13 +264,13 @@ if __name__ == '__main__':
         elif run==3:
             args = Args(input_data='set2000.h5', focal_loss_ag=(0.25,2.0))
         elif run==4:
-            args = Args(input_data='set2000.h5', focal_loss_ag=None,       dilate=0)
+            args = Args(input_data='set2000.h5', focal_loss_ag=None,       dilate=0.)
         elif run==5:
-            args = Args(input_data='set2000.h5', focal_loss_ag=(0.99,2.0), dilate=0)
+            args = Args(input_data='set2000.h5', focal_loss_ag=(0.99,2.0), dilate=0.)
         elif run==6:
-            args = Args(input_data='set2000.h5', focal_loss_ag=(0.99,4.0), dilate=0)
+            args = Args(input_data='set2000.h5', focal_loss_ag=(0.99,4.0), dilate=0.)
         elif run==7:
-            args = Args(input_data='set2000.h5', focal_loss_ag=(0.9,4.0),  dilate=0)
+            args = Args(input_data='set2000.h5', focal_loss_ag=(0.9,4.0),  dilate=0.)
 
 
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
