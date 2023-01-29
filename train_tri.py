@@ -56,6 +56,7 @@ def train_model(
         gradient_clipping: float = 1.0,
         focal_loss_ag: tuple = (0.25, 2.0), # None,  # or tuple = (0.25, 2.0),
         dilate: float = 0.,
+        target_downscale: int = 1,
 ):
 
     # 1. Create dataset
@@ -164,7 +165,7 @@ def train_model(
 
                 # Evaluation round
                 #division_step = (n_train // (10 * batch_size))
-                division_step = len(train_loader)//4
+                division_step = len(train_loader)//2
                 if division_step > 0:
                     if global_step % division_step == 0:
                         histograms = {}
@@ -236,6 +237,7 @@ class Args():
                  classes: int = 1,      # Number of classes
                  focal_loss_ag: tuple = (0.25, 2.0),  # None for no focal loss
                  dilate: float = 0.,
+                 target_downscale: int = 1,  # Set to 4 to 1/4 size
                  ):
         self.run = run
         self.input_data = input_data
@@ -249,20 +251,21 @@ class Args():
         self.classes = classes
         self.focal_loss_ag = focal_loss_ag
         self.dilate = dilate
+        self.target_downscale = target_downscale
 
 
 if __name__ == '__main__':
     # args = get_args()
 
     start = 4
-    end = 7
+    end = 6
     for run in range(start, end+1):
         if run==1:
-            args = Args(input_data='set10.h5', focal_loss_ag=None)
+            args = Args(input_data='set10.h5', run=run, focal_loss_ag=None)
         elif run==2:
-            args = Args(input_data='set10.h5', focal_loss_ag=(0.25,2.0))
+            args = Args(input_data='set10.h5',  run=run, focal_loss_ag=(0.25,2.0))
         elif run==3:
-            args = Args(input_data='set2000.h5', focal_loss_ag=(0.25,2.0))
+            args = Args(input_data='set2000.h5',  run=run, focal_loss_ag=(0.25,2.0))
         elif run==4:
             args = Args(input_data='set2000.h5', focal_loss_ag=None,       dilate=0.)
         elif run==5:
@@ -273,57 +276,59 @@ if __name__ == '__main__':
             args = Args(input_data='set2000.h5', focal_loss_ag=(0.9,4.0),  dilate=0.)
 
 
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-    #device = torch.device('cpu')
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    logging.info(f'Using device {device}')
+        logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+        #device = torch.device('cpu')
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        logging.info(f'Using device {device}')
 
-    # Change here to adapt to your data
-    # n_channels=3 for RGB images
-    # n_classes is the number of probabilities you want to get per pixel
-    model = UNetSmall(n_channels=1, n_classes=args.classes, bilinear=not args.convtrans)
-    # model = UNet(n_channels=3, n_classes=args.classes, bilinear=not args.convtrans)
-    model = model.to(memory_format=torch.channels_last)
+        # Change here to adapt to your data
+        # n_channels=3 for RGB images
+        # n_classes is the number of probabilities you want to get per pixel
+        model = UNetSmall(n_channels=1, n_classes=args.classes, bilinear=not args.convtrans)
+        # model = UNet(n_channels=3, n_classes=args.classes, bilinear=not args.convtrans)
+        model = model.to(memory_format=torch.channels_last)
 
-    logging.info(f'Network:\n'
-                 f'\t{model.n_channels} input channels\n'
-                 f'\t{model.n_classes} output channels (classes)\n'
-                 f'\t{"Bilinear" if model.bilinear else "Transposed conv"} upscaling')
+        logging.info(f'Network:\n'
+                    f'\t{model.n_channels} input channels\n'
+                    f'\t{model.n_classes} output channels (classes)\n'
+                    f'\t{"Bilinear" if model.bilinear else "Transposed conv"} upscaling')
 
-    if args.load:
-        state_dict = torch.load(args.load, map_location=device)
-        del state_dict['mask_values']
-        model.load_state_dict(state_dict)
-        logging.info(f'Model loaded from {args.load}')
+        if args.load:
+            state_dict = torch.load(args.load, map_location=device)
+            del state_dict['mask_values']
+            model.load_state_dict(state_dict)
+            logging.info(f'Model loaded from {args.load}')
 
-    model.to(device=device)
-    try:
-        train_model(
-            model = model,
-            run = run,
-            datafile = os.path.join(datadir, args.input_data),
-            dir_output = os.path.join(dirname,'output',f'run_{run:03d}'),
-            epochs=args.epochs,
-            batch_size=args.batch_size,
-            learning_rate=args.lr,
-            device=device,
-            img_scale=args.scale,
-            amp=args.amp,
-            focal_loss_ag=args.focal_loss_ag,
-        )
-    except torch.cuda.OutOfMemoryError:
-        logging.error('Detected OutOfMemoryError! '
-                      'Enabling checkpointing to reduce memory usage, but this slows down training. '
-                      'Consider enabling AMP (--amp) for fast and memory efficient training')
-        torch.cuda.empty_cache()
-        model.use_checkpointing()
-        train_model(
-            model=model,
-            epochs=args.epochs,
-            batch_size=args.batch_size,
-            learning_rate=args.lr,
-            device=device,
-            img_scale=args.scale,
-            val_percent=args.val / 100,
-            amp=args.amp
-        )
+        model.to(device=device)
+        try:
+            train_model(
+                model = model,
+                run = args.run,
+                datafile = os.path.join(datadir, args.input_data),
+                dir_output = os.path.join(dirname,'output',f'run_{run:03d}'),
+                epochs=args.epochs,
+                batch_size=args.batch_size,
+                learning_rate=args.lr,
+                device=device,
+                img_scale=args.scale,
+                amp=args.amp,
+                focal_loss_ag=args.focal_loss_ag,
+                dilate=args.dilate,
+                target_downscale=args.target_downscale,            
+            )
+        except torch.cuda.OutOfMemoryError:
+            logging.error('Detected OutOfMemoryError! '
+                        'Enabling checkpointing to reduce memory usage, but this slows down training. '
+                        'Consider enabling AMP (--amp) for fast and memory efficient training')
+            torch.cuda.empty_cache()
+            model.use_checkpointing()
+            train_model(
+                model=model,
+                epochs=args.epochs,
+                batch_size=args.batch_size,
+                learning_rate=args.lr,
+                device=device,
+                img_scale=args.scale,
+                val_percent=args.val / 100,
+                amp=args.amp
+            )
