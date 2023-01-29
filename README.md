@@ -238,4 +238,5 @@ The one trick is to get a version of OpenCV that doesn't have conflicts.  This i
 ```
 conda install pip
 pip install opencv-python-headless
+pip install wandb
 ```

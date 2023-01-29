@@ -33,7 +33,7 @@ else:
     datadir = '/mnt/home/dmorris/Data/Triangles'
 
 #datafile = os.path.join(datadir, 'set10.h5')
-datafile = os.path.join(datadir, 'set1000.h5')
+datafile = os.path.join(datadir, 'set2000.h5')
 
 dir_checkpoint = Path(os.path.join(dirname,'checkpoints/'))
 dir_output = os.path.join(dirname,'output')
