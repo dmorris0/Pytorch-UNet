@@ -32,8 +32,8 @@ if os.name == 'nt':
 else:
     datadir = '/mnt/home/dmorris/Data/Triangles'
 
-datafile = os.path.join(datadir, 'set10.h5')
-#datafile = os.path.join(datadir, 'set1000.h5')
+#datafile = os.path.join(datadir, 'set10.h5')
+datafile = os.path.join(datadir, 'set1000.h5')
 
 dir_checkpoint = Path(os.path.join(dirname,'checkpoints/'))
 dir_output = os.path.join(dirname,'output')
@@ -146,8 +146,8 @@ def train_model(
                 pbar.set_postfix(**{'loss (batch)': loss.item()})
 
                 # Evaluation round
-                # division_step = (n_train // (5 * batch_size))
-                division_step = (n_train // batch_size)
+                division_step = (n_train // (5 * batch_size))
+                #division_step = (n_train // batch_size)
                 if division_step > 0:
                     if global_step % division_step == 0:
                         histograms = {}

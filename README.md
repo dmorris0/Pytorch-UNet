@@ -203,12 +203,14 @@ module spider Python/3.10.4
 ## Steps for installation
 
 1. Load modules:
+https://docs.icer.msu.edu/How_to_find_and_load_software_modules/
 ```
 module purge
 module load GCCcore/11.3.0
 module load Python/3.10.4
 module load CUDA/11.6.0
 ```
+
 2. Create a virtual environment and then activate it.  Note: always module load the correct Python first.
 
 3. Install Pytorch:
@@ -231,3 +233,9 @@ module load cuDNN/8.4.1.50-CUDA-11.6.0
 2. Activate virtual environment
 
 
+## Switched to using miniconda
+The one trick is to get a version of OpenCV that doesn't have conflicts.  This is what worked:
+```
+conda install pip
+pip install opencv-python-headless
+```
