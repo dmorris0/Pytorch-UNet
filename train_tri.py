@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 import torchvision.transforms.functional as TF
+import torchvision.ops
 from pathlib import Path
 from torch import optim
 from torch.utils.data import DataLoader, random_split
@@ -32,26 +33,28 @@ if os.name == 'nt':
 else:
     datadir = '/mnt/home/dmorris/Data/Triangles'
 
-#datafile = os.path.join(datadir, 'set10.h5')
-datafile = os.path.join(datadir, 'set2000.h5')
+datafile = os.path.join(datadir, 'set10.h5')
+#datafile = os.path.join(datadir, 'set2000.h5')
 
 dir_checkpoint = Path(os.path.join(dirname,'checkpoints/'))
-dir_output = os.path.join(dirname,'output')
-os.makedirs(dir_output,exist_ok=True)
 
 def train_model(
         model,
+        run,
+        datafile,
+        dir_output,
         device,
         epochs: int = 5,
         batch_size: int = 1,
         learning_rate: float = 1e-5,
-        val_percent: float = 0.1,
+        #val_percent: float = 0.1,
         save_checkpoint: bool = True,
         img_scale: float = 0.5,
         amp: bool = False,
         weight_decay: float = 1e-8,
         momentum: float = 0.999,
         gradient_clipping: float = 1.0,
+        focal_loss_ag: tuple = (0.25, 2.0), # None,  # or tuple = (0.25, 2.0)
 ):
 
     # 1. Create dataset
@@ -63,15 +66,20 @@ def train_model(
     train_loader = DataLoader(train_set, shuffle=True, **loader_args)
     val_loader = DataLoader(val_set, shuffle=False, drop_last=True, **loader_args)
 
+    os.makedirs(dir_output,exist_ok=True)
+
+
     # (Initialize logging)
     experiment = wandb.init(project='U-Net', resume='allow', anonymous='must')
     experiment.config.update(
         dict(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate,
-             val_percent=val_percent, save_checkpoint=save_checkpoint, img_scale=img_scale, amp=amp)
+             save_checkpoint=save_checkpoint, img_scale=img_scale, amp=amp)
     )
 
     logging.info(f'''Starting training:
-        Epochs:          {epochs}
+        Run:             {run}
+        Output:          {dir_output}
+        Epochs:          {epochs}        
         Batch size:      {batch_size}
         Learning rate:   {learning_rate}
         Training size:   {n_train}
@@ -90,7 +98,12 @@ def train_model(
 
     # Find positive weights for single-pixel positives:
     pos_weight = torch.Tensor([train_set.pos_weight]).to(device)
-    criterion = nn.CrossEntropyLoss() if model.n_classes > 1 else nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    if focal_loss_ag is None:
+        criterion = nn.CrossEntropyLoss() if model.n_classes > 1 else nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    else:
+        criterion = lambda inputs, targets: torchvision.ops.sigmoid_focal_loss(
+            inputs, targets, alpha=focal_loss_ag[0], gamma=focal_loss_ag[1], reduction='mean')
+
     global_step = 0
 
     #for epoch in range(1, 1 + 1):
@@ -146,8 +159,8 @@ def train_model(
                 pbar.set_postfix(**{'loss (batch)': loss.item()})
 
                 # Evaluation round
-                division_step = (n_train // (5 * batch_size))
-                #division_step = (n_train // batch_size)
+                #division_step = (n_train // (5 * batch_size))
+                division_step = len(train_loader)
                 if division_step > 0:
                     if global_step % division_step == 0:
                         histograms = {}
@@ -158,7 +171,8 @@ def train_model(
                             if not torch.isinf(value.grad).any():
                                 histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
 
-                        val_score, val_dice, val_pr, val_re = evaluate_bce(model, val_loader, device, criterion, amp, os.path.join(dir_output,f'val_epoch_{epoch}.h5') )
+                        val_score, val_dice, val_pr, val_re = evaluate_bce(
+                            model, val_loader, device, criterion, amp, os.path.join(dir_output,f'val_step_{global_step:03d}.h5') )
                         scheduler.step(val_dice)
 
                         logging.info(f'Validation Loss {val_score:.3f}, Dice {val_dice:.3f}, Pr {val_pr:.3f}, Re {val_re:.3f}')
@@ -204,9 +218,41 @@ def get_args():
 
     return parser.parse_args()
 
+class Args():
+    def __init__(self,
+                 run: int = -1,
+                 input_data: str = 'set10.h5',
+                 epochs: int = 5,
+                 batch_size: int = 4,
+                 lr: float = 1e-5,
+                 load: str = False,     # load model from a .pth file
+                 scale: float = 0.5,    # Downscaling factor of the images
+                 amp: bool = False,     # Use mixed precision
+                 convtrans: bool = False,  #use transpose convolution instead of bilinear upsampling
+                 classes: int = 1,      # Number of classes
+                 focal_loss_ag: tuple = (0.25, 2.0)  # None for no focal loss
+                 ):
+        self.run = run
+        self.input_data = input_data
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.lr = lr
+        self.load = load
+        self.scale = scale
+        self.amp = amp
+        self.convtrans = convtrans
+        self.classes = classes
+        self.focal_loss_ag = focal_loss_ag
+
 
 if __name__ == '__main__':
-    args = get_args()
+    # args = get_args()
+    run = 1
+    if run==1:
+        args = Args(input_data='set10.h5', focal_loss_ag=None)
+    elif run==2:
+        args = Args(input_data='set10.h5', focal_loss_ag=None)
+
 
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     #device = torch.device('cpu')
@@ -234,14 +280,17 @@ if __name__ == '__main__':
     model.to(device=device)
     try:
         train_model(
-            model=model,
+            model = model,
+            run = run,
+            datafile = os.path.join(datadir, args.input_data),
+            dir_output = os.path.join(dirname,'output',f'run_{run:03d}'),
             epochs=args.epochs,
             batch_size=args.batch_size,
             learning_rate=args.lr,
             device=device,
             img_scale=args.scale,
-            val_percent=args.val / 100,
-            amp=args.amp
+            amp=args.amp,
+            focal_loss_ag=args.focal_loss_ag,
         )
     except torch.cuda.OutOfMemoryError:
         logging.error('Detected OutOfMemoryError! '

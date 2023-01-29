@@ -107,8 +107,8 @@ def evaluate_bce(net, dataloader, device, criterion, amp, h5filename=None):
 
     net.train()
 
-    dice = 2*scores[0] / (scores[0]+scores.sum())
-    precision = scores[0]/ (scores[0]+scores[1])
-    recall = scores[0]/ (scores[0]+scores[2])
+    dice = 2*scores[0] / (scores[0]+scores.sum()+1e-3)
+    precision = scores[0]/ (scores[0]+scores[1]+1e-3)
+    recall = scores[0]/ (scores[0]+scores[2]+1e-3)
 
     return bce / max(num_val_batches, 1), dice, precision, recall
