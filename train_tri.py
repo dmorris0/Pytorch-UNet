@@ -182,7 +182,7 @@ def train_model(
 
                         val_score, val_dice, val_pr, val_re = evaluate_bce(
                             model, val_loader, device, criterion, amp, target_downscale, max_distance,
-                            os.path.join(dir_val_output,f'val_step_{global_step:03d}.h5') )
+                            os.path.join(dir_val_output,f'val_step_{global_step:05d}.h5') )
                         scheduler.step(val_dice)
 
                         logging.info(f'Validation Loss {val_score:.3f}, Dice {val_dice:.3f}, Pr {val_pr:.3f}, Re {val_re:.3f}')
@@ -231,7 +231,7 @@ def get_args():
 
 class Args():
     def __init__(self,
-                 run: int = -1,
+                 run: int,
                  input_data: str = 'set10.h5',
                  epochs: int = 10,
                  batch_size: int = 4,
@@ -265,27 +265,26 @@ class Args():
 if __name__ == '__main__':
     # args = get_args()
 
-    start = 8
-    end = 8
-    for run in range(start, end+1):
+    runlist = [5,6,7,9]
+    for run in runlist:
         if run==1:
-            args = Args(input_data='set10.h5', run=run, epochs=4, focal_loss_ag=None)
+            args = Args(run, input_data='set10.h5', epochs=4, focal_loss_ag=None)
         elif run==2:
-            args = Args(input_data='set10.h5', run=run, epochs=5, focal_loss_ag=None, dilate=2.5, target_downscale=4, load='C:/Users/morri/Source/Repos/Pytorch-UNet/checkpoints/checkpoint_epoch5.pth')
+            args = Args(run, input_data='set10.h5', epochs=5, focal_loss_ag=None, dilate=2.5, target_downscale=4, load='C:/Users/morri/Source/Repos/Pytorch-UNet/checkpoints/checkpoint_epoch5.pth')
         elif run==3:
-            args = Args(input_data='set2000.h5',  run=run, focal_loss_ag=(0.25,2.0))
+            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.25,2.0))
         elif run==4:
-            args = Args(input_data='set2000.h5', focal_loss_ag=None,       dilate=0.)
+            args = Args(run, input_data='set2000.h5', focal_loss_ag=None,       dilate=0.)
         elif run==5:
-            args = Args(input_data='set2000.h5', focal_loss_ag=(0.99,2.0), dilate=0.)
+            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.99,2.0), dilate=0.)
         elif run==6:
-            args = Args(input_data='set2000.h5', focal_loss_ag=(0.99,4.0), dilate=0.)
+            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.99,4.0), dilate=0.)
         elif run==7:
-            args = Args(input_data='set2000.h5', focal_loss_ag=(0.9,4.0),  dilate=0.)
+            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.9,4.0),  dilate=0.)
         elif run==8:
-            args = Args(input_data='set2000.h5', focal_loss_ag=None,  dilate=2.5, target_downscale=4)
+            args = Args(run, input_data='set2000.h5', focal_loss_ag=None,  dilate=2.5, target_downscale=4)
         elif run==9:
-            args = Args(input_data='set2000.h5', focal_loss_ag=(0.9,2.0),  dilate=2.5, target_downscale=4)
+            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.9,2.0),  dilate=2.5, target_downscale=4)
 
 
         logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -293,9 +292,6 @@ if __name__ == '__main__':
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logging.info(f'Using device {device}')
 
-        # Change here to adapt to your data
-        # n_channels=3 for RGB images
-        # n_classes is the number of probabilities you want to get per pixel
         if args.target_downscale==1:
             model = UNetSmall(n_channels=1, n_classes=args.classes, bilinear=not args.convtrans)
         elif args.target_downscale==4:
@@ -303,7 +299,6 @@ if __name__ == '__main__':
         else:
             raise Exception(f'Invalid target_downscale: {args.target_downscale}')
 
-        # model = UNet(n_channels=3, n_classes=args.classes, bilinear=not args.convtrans)
         model = model.to(memory_format=torch.channels_last)
 
         logging.info(f'Network:\n'
@@ -318,36 +313,20 @@ if __name__ == '__main__':
             logging.info(f'Model loaded from {args.load}')
 
         model.to(device=device)
-        try:
-            train_model(
-                model = model,
-                run = args.run,
-                datafile = os.path.join(datadir, args.input_data),
-                dir_output = os.path.join(dirname,'output',f'run_{run:03d}'),
-                epochs=args.epochs,
-                batch_size=args.batch_size,
-                learning_rate=args.lr,
-                device=device,
-                img_scale=args.scale,
-                amp=args.amp,
-                focal_loss_ag=args.focal_loss_ag,
-                dilate=args.dilate,
-                target_downscale=args.target_downscale,
-                max_distance=args.max_distance,            
-            )
-        except torch.cuda.OutOfMemoryError:
-            logging.error('Detected OutOfMemoryError! '
-                        'Enabling checkpointing to reduce memory usage, but this slows down training. '
-                        'Consider enabling AMP (--amp) for fast and memory efficient training')
-            torch.cuda.empty_cache()
-            model.use_checkpointing()
-            train_model(
-                model=model,
-                epochs=args.epochs,
-                batch_size=args.batch_size,
-                learning_rate=args.lr,
-                device=device,
-                img_scale=args.scale,
-                val_percent=args.val / 100,
-                amp=args.amp
-            )
+
+        train_model(
+            model=model,
+            run=args.run,
+            datafile=os.path.join(datadir, args.input_data),
+            dir_output=os.path.join(dirname, 'output', f'run_{run:03d}'),
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            learning_rate=args.lr,
+            device=device,
+            img_scale=args.scale,
+            amp=args.amp,
+            focal_loss_ag=args.focal_loss_ag,
+            dilate=args.dilate,
+            target_downscale=args.target_downscale,
+            max_distance=args.max_distance,
+        )
