@@ -55,6 +55,7 @@ def train_model(
         focal_loss_ag: tuple = (0.25, 2.0), # None,  # or tuple = (0.25, 2.0),
         dilate: float = 0.,
         target_downscale: int = 1,
+        max_distance: int = 12,
 ):
 
     # 1. Create dataset
@@ -94,6 +95,7 @@ def train_model(
         Focal Loss:       {focal_loss_ag}
         Dilate:           {dilate}
         Target Downscale: {target_downscale}
+        Max Distance:     {max_distance}
     ''')
 
     # 4. Set up the optimizer, the loss, the learning rate scheduler and the loss scaling for AMP
@@ -179,7 +181,7 @@ def train_model(
                                 histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
 
                         val_score, val_dice, val_pr, val_re = evaluate_bce(
-                            model, val_loader, device, criterion, amp, target_downscale, 
+                            model, val_loader, device, criterion, amp, target_downscale, max_distance,
                             os.path.join(dir_val_output,f'val_step_{global_step:03d}.h5') )
                         scheduler.step(val_dice)
 
@@ -233,7 +235,7 @@ class Args():
                  input_data: str = 'set10.h5',
                  epochs: int = 10,
                  batch_size: int = 4,
-                 lr: float = 1e-5,
+                 lr: float = 1e-6,
                  load: str = False,     # load model from a .pth file
                  scale: float = 0.5,    # Downscaling factor of the images
                  amp: bool = False,     # Use mixed precision
@@ -242,6 +244,7 @@ class Args():
                  focal_loss_ag: tuple = (0.25, 2.0),  # None for no focal loss
                  dilate: float = 0.,
                  target_downscale: int = 1,  # Set to 4 to 1/4 size
+                 max_distance: int = 12,
                  ):
         self.run = run
         self.input_data = input_data
@@ -256,6 +259,7 @@ class Args():
         self.focal_loss_ag = focal_loss_ag
         self.dilate = dilate
         self.target_downscale = target_downscale
+        self.max_distance = max_distance
 
 
 if __name__ == '__main__':
@@ -328,7 +332,8 @@ if __name__ == '__main__':
                 amp=args.amp,
                 focal_loss_ag=args.focal_loss_ag,
                 dilate=args.dilate,
-                target_downscale=args.target_downscale,            
+                target_downscale=args.target_downscale,
+                max_distance=args.max_distance,            
             )
         except torch.cuda.OutOfMemoryError:
             logging.error('Detected OutOfMemoryError! '

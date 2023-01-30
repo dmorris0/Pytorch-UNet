@@ -55,15 +55,14 @@ class SaveResults:
             self.hf.close()
 
 @torch.inference_mode()
-def evaluate_bce(net, dataloader, device, criterion, amp, target_downscale, h5filename=None):
+def evaluate_bce(net, dataloader, device, criterion, amp, target_downscale, max_distance, h5filename=None):
     net.eval()
     num_val_batches = len(dataloader)
     bce = 0
     scores = np.zeros( (3,) )
     peaks = Peaks(1, device)
     min_val = 0.
-    max_distance = 8 / target_downscale
-    matches = MatchScore(max_distance=max_distance)
+    matches = MatchScore(max_distance = max_distance / target_downscale)
     save = None    
     Nb = len(dataloader)
 
