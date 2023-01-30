@@ -25,11 +25,11 @@ class SaveResults:
         imshape = (N, batch['image'].shape[2], batch['image'].shape[3], batch['image'].shape[1])
         centershape = (N, batch['centers'].shape[2], 2)
         nshape = (N,)
-        heatshape = (N, batch['image'].shape[2], batch['image'].shape[3])
+        heatshape = (N, batch['targets'].shape[2], batch['targets'].shape[3])
         scoreshape = (N, 3)        
 
         group.create_dataset('images', shape=imshape, dtype='u1', compression='lzf')
-        group.create_dataset('centers', shape=centershape, dtype='i8' )
+        group.create_dataset('centers', shape=centershape, dtype='f4' )
         group.create_dataset('nobj', shape=nshape, dtype='i8' )
         group.create_dataset('heatmap',shape=heatshape, dtype='f4')               
         group.create_dataset('scores',shape=scoreshape, dtype='i8' )             
@@ -55,14 +55,14 @@ class SaveResults:
             self.hf.close()
 
 @torch.inference_mode()
-def evaluate_bce(net, dataloader, device, criterion, amp, h5filename=None):
+def evaluate_bce(net, dataloader, device, criterion, amp, target_downscale, h5filename=None):
     net.eval()
     num_val_batches = len(dataloader)
     bce = 0
     scores = np.zeros( (3,) )
     peaks = Peaks(1, device)
     min_val = 0.
-    max_distance = 8
+    max_distance = 8 / target_downscale
     matches = MatchScore(max_distance=max_distance)
     save = None    
     Nb = len(dataloader)
@@ -81,7 +81,7 @@ def evaluate_bce(net, dataloader, device, criterion, amp, h5filename=None):
             mask_pred = net(image)
 
             detections = peaks.peak_coords( mask_pred, min_val=0.)
-            bscores = matches.calc_match_scores( detections, centers, ncen )
+            bscores = matches.calc_match_scores( detections, centers/target_downscale, ncen )
 
             if save is None:
                 save = SaveResults(h5filename=h5filename, batch=batch, Nb=Nb)

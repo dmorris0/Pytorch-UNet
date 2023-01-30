@@ -93,14 +93,14 @@ class UNetSmall(nn.Module):
 
 class UNetSmallQuarter(nn.Module):
     def __init__(self, n_channels, n_classes, bilinear=False):
-        super(UNetSmall, self).__init__()
+        super(UNetSmallQuarter, self).__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.bilinear = bilinear
 
         self.inc = (DoubleConv(n_channels, 64))        
-        self.down_pre1 = (Down(64, 64))
-        self.down_pre2 = (Down(64, 64))
+        self.down_pre1 = (DownAvg(64, 64))
+        self.down_pre2 = (DownAvg(64, 64))
         self.down1 = (Down(64, 64))
         self.down2 = (Down(64, 64))
         self.down3 = (Down(64, 64))

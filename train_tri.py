@@ -17,7 +17,7 @@ import numpy as np
 
 import wandb
 from evaluate_bce import evaluate_bce
-from unet import UNet, UNetSmall
+from unet import UNet, UNetSmall, UNetSmallQuarter
 #from utils.data_loading import BasicDataset, CarvanaDataset
 #from utils.dice_score import dice_loss
 
@@ -35,8 +35,6 @@ else:
 
 datafile = os.path.join(datadir, 'set10.h5')
 #datafile = os.path.join(datadir, 'set2000.h5')
-
-dir_checkpoint = Path(os.path.join(dirname,'checkpoints/'))
 
 def train_model(
         model,
@@ -60,7 +58,9 @@ def train_model(
 ):
 
     # 1. Create dataset
-    train_set, val_set = ImageData(datafile,'train',radius=dilate), ImageData(datafile,'validation',radius=dilate)
+    train_set = ImageData(datafile,'train',     radius=dilate, target_downscale=target_downscale)
+    val_set   = ImageData(datafile,'validation',radius=dilate, target_downscale=target_downscale)
+
     n_train, n_val = len(train_set), len(val_set)
 
     # 3. Create data loaders
@@ -69,7 +69,8 @@ def train_model(
     val_loader = DataLoader(val_set, shuffle=False, drop_last=True, **loader_args)
 
     os.makedirs(dir_output,exist_ok=True)
-
+    dir_val_output = os.path.join(dir_output,'val')
+    os.makedirs(dir_val_output,exist_ok=True)
 
     # (Initialize logging)
     experiment = wandb.init(project='U-Net', resume='allow', anonymous='must')
@@ -79,19 +80,20 @@ def train_model(
     )
 
     logging.info(f'''Starting training:
-        Run:             {run}
-        Output:          {dir_output}
-        Epochs:          {epochs}        
-        Batch size:      {batch_size}
-        Learning rate:   {learning_rate}
-        Training size:   {n_train}
-        Validation size: {n_val}
-        Checkpoints:     {save_checkpoint}
-        Device:          {device.type}
-        Images scaling:  {img_scale}
-        Mixed Precision: {amp}
-        Focal Loss:      {focal_loss_ag}
-        Dilate:          {dilate}
+        Run:              {run}
+        Output:           {dir_output}
+        Epochs:           {epochs}        
+        Batch size:       {batch_size}
+        Learning rate:    {learning_rate}
+        Training size:    {n_train}
+        Validation size:  {n_val}
+        Checkpoints:      {save_checkpoint}
+        Device:           {device.type}
+        Images scaling:   {img_scale}
+        Mixed Precision:  {amp}
+        Focal Loss:       {focal_loss_ag}
+        Dilate:           {dilate}
+        Target Downscale: {target_downscale}
     ''')
 
     # 4. Set up the optimizer, the loss, the learning rate scheduler and the loss scaling for AMP
@@ -101,8 +103,8 @@ def train_model(
     grad_scaler = torch.cuda.amp.GradScaler(enabled=amp)
 
     # Find positive weights for single-pixel positives:
-    pos_weight = torch.Tensor([train_set.pos_weight]).to(device)
-    print('Pos Weight:', train_set.pos_weight)
+    pos_weight = torch.Tensor([train_set.pos_weight/target_downscale**2]).to(device)
+    print('Pos Weight:', pos_weight[0].item())
     if focal_loss_ag is None:
         criterion = nn.CrossEntropyLoss() if model.n_classes > 1 else nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     else:
@@ -177,7 +179,8 @@ def train_model(
                                 histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
 
                         val_score, val_dice, val_pr, val_re = evaluate_bce(
-                            model, val_loader, device, criterion, amp, os.path.join(dir_output,f'val_step_{global_step:03d}.h5') )
+                            model, val_loader, device, criterion, amp, target_downscale, 
+                            os.path.join(dir_val_output,f'val_step_{global_step:03d}.h5') )
                         scheduler.step(val_dice)
 
                         logging.info(f'Validation Loss {val_score:.3f}, Dice {val_dice:.3f}, Pr {val_pr:.3f}, Re {val_re:.3f}')
@@ -200,6 +203,7 @@ def train_model(
 
 
         if save_checkpoint:
+            dir_checkpoint = Path(os.path.join(dir_output,'checkpoints'))
             Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
             state_dict = model.state_dict()
             # state_dict['mask_values'] = dataset.mask_values
@@ -257,13 +261,13 @@ class Args():
 if __name__ == '__main__':
     # args = get_args()
 
-    start = 4
-    end = 6
+    start = 2
+    end = 2
     for run in range(start, end+1):
         if run==1:
-            args = Args(input_data='set10.h5', run=run, focal_loss_ag=None)
+            args = Args(input_data='set10.h5', run=run, epochs=4, focal_loss_ag=None)
         elif run==2:
-            args = Args(input_data='set10.h5',  run=run, focal_loss_ag=(0.25,2.0))
+            args = Args(input_data='set10.h5', run=run, epochs=5, focal_loss_ag=None, dilate=2.5, target_downscale=4, load='C:/Users/morri/Source/Repos/Pytorch-UNet/checkpoints/checkpoint_epoch5.pth')
         elif run==3:
             args = Args(input_data='set2000.h5',  run=run, focal_loss_ag=(0.25,2.0))
         elif run==4:
@@ -274,17 +278,25 @@ if __name__ == '__main__':
             args = Args(input_data='set2000.h5', focal_loss_ag=(0.99,4.0), dilate=0.)
         elif run==7:
             args = Args(input_data='set2000.h5', focal_loss_ag=(0.9,4.0),  dilate=0.)
+        elif run==8:
+            args = Args(input_data='set2000.h5', focal_loss_ag=(0.9,2.0),  dilate=2.5, target_downscale=4)
 
 
         logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-        #device = torch.device('cpu')
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        device = torch.device('cpu')
+        #device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logging.info(f'Using device {device}')
 
         # Change here to adapt to your data
         # n_channels=3 for RGB images
         # n_classes is the number of probabilities you want to get per pixel
-        model = UNetSmall(n_channels=1, n_classes=args.classes, bilinear=not args.convtrans)
+        if args.target_downscale==1:
+            model = UNetSmall(n_channels=1, n_classes=args.classes, bilinear=not args.convtrans)
+        elif args.target_downscale==4:
+            model = UNetSmallQuarter(n_channels=1, n_classes=args.classes, bilinear=not args.convtrans)
+        else:
+            raise Exception(f'Invalid target_downscale: {args.target_downscale}')
+
         # model = UNet(n_channels=3, n_classes=args.classes, bilinear=not args.convtrans)
         model = model.to(memory_format=torch.channels_last)
 
@@ -295,7 +307,7 @@ if __name__ == '__main__':
 
         if args.load:
             state_dict = torch.load(args.load, map_location=device)
-            del state_dict['mask_values']
+            # del state_dict['mask_values']
             model.load_state_dict(state_dict)
             logging.info(f'Model loaded from {args.load}')
 
