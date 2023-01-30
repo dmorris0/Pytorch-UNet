@@ -261,8 +261,8 @@ class Args():
 if __name__ == '__main__':
     # args = get_args()
 
-    start = 2
-    end = 2
+    start = 8
+    end = 8
     for run in range(start, end+1):
         if run==1:
             args = Args(input_data='set10.h5', run=run, epochs=4, focal_loss_ag=None)
@@ -279,12 +279,14 @@ if __name__ == '__main__':
         elif run==7:
             args = Args(input_data='set2000.h5', focal_loss_ag=(0.9,4.0),  dilate=0.)
         elif run==8:
+            args = Args(input_data='set2000.h5', focal_loss_ag=None,  dilate=2.5, target_downscale=4)
+        elif run==9:
             args = Args(input_data='set2000.h5', focal_loss_ag=(0.9,2.0),  dilate=2.5, target_downscale=4)
 
 
         logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-        device = torch.device('cpu')
-        #device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        #device = torch.device('cpu')
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logging.info(f'Using device {device}')
 
         # Change here to adapt to your data
