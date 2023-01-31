@@ -265,22 +265,23 @@ class Args():
 if __name__ == '__main__':
     # args = get_args()
 
-    runlist = [5,6,7,9]
+    runlist = [2]
     for run in runlist:
         if run==1:
             args = Args(run, input_data='set10.h5', epochs=4, focal_loss_ag=None)
         elif run==2:
-            args = Args(run, input_data='set10.h5', epochs=5, focal_loss_ag=None, dilate=2.5, target_downscale=4, load='C:/Users/morri/Source/Repos/Pytorch-UNet/checkpoints/checkpoint_epoch5.pth')
+            args = Args(run, input_data='set10.h5', epochs=5, focal_loss_ag=None, dilate=2.5, target_downscale=4 )
+                    #        load='C:/Users/morri/Source/Repos/Pytorch-UNet/checkpoints/checkpoint_epoch5.pth')
         elif run==3:
-            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.25,2.0))
+            args = Args(run, input_data='set10.h5', epochs=5, focal_loss_ag=(0.9,2.0), dilate=2.5, target_downscale=4 )
         elif run==4:
-            args = Args(run, input_data='set2000.h5', focal_loss_ag=None,       dilate=0.)
+            args = Args(run, input_data='set2000.h5', focal_loss_ag=None,       dilate=0., target_downscale=4)
         elif run==5:
-            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.99,2.0), dilate=0.)
+            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.25,2.0), dilate=0., target_downscale=4)
         elif run==6:
-            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.99,4.0), dilate=0.)
+            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.5,2.0), dilate=0.,  target_downscale=4)
         elif run==7:
-            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.9,4.0),  dilate=0.)
+            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.9,2.0),  dilate=0., target_downscale=4)
         elif run==8:
             args = Args(run, input_data='set2000.h5', focal_loss_ag=None,  dilate=2.5, target_downscale=4)
         elif run==9:
@@ -288,8 +289,10 @@ if __name__ == '__main__':
 
         print(80*"=")
         logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-        #device = torch.device('cpu')
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if os.name == 'nt':        
+            device = torch.device('cpu')  # My windows GPU is very slow
+        else:
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logging.info(f'Using device {device}')
 
         if args.target_downscale==1:
