@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 import numpy as np
-import h5py
+import h5py, json
 import sys
 sys.path.append('../cvdemos/image')
 from heatmap_score import Peaks, MatchScore
@@ -20,6 +20,7 @@ class SaveResults:
         else:
             self.hf = None
             return
+        self.json_filename = h5filename.replace('.h5','.json')
         group = self.hf.create_group(name)
         N = Nb * batch['image'].shape[0]  # Total number of images
         imshape = (N, batch['image'].shape[2], batch['image'].shape[3], batch['image'].shape[1])
@@ -36,21 +37,40 @@ class SaveResults:
         group.create_dataset('params',shape=(2,), dtype='f4')
 
         self.group = group
+
+        self.name = name
+        self.data_annotations = {"image_file":h5filename, 
+                                 name: {"targets": {},
+                                        "scores": {},
+                                        "max_targets": batch['centers'].shape[2],
+                                        "params": []
+                                        }
+                                 }
         self.index=0    
     
     def add(self, images, centers, ncens, mask_preds, scores, min_val, max_distance):
         if not self.hf is None:
             for img, cens, ncen, preds, iscores in zip(images.cpu().numpy(), centers.cpu().numpy(), ncens.cpu().numpy(), mask_preds.cpu().numpy(), scores):
                 self.group['images'][self.index] = (img.transpose((1,2,0))*255).astype(np.uint8)
-                self.group['centers'][self.index] = cens[0]
-                self.group['nobj'][self.index] = ncen[0]
                 self.group['heatmap'][self.index] = preds[0].astype(np.float32)
-                self.group['scores'][self.index] = iscores
+
+                self.data_annotations[self.name]["targets"][str(self.index)] = cens[0][:ncens[0],:].tolist()
+                self.data_annotations[self.name]["scores"][str(self.index)] = iscores.tolist()
+                #self.group['centers'][self.index] = cens[0]
+                #self.group['nobj'][self.index] = ncen[0]
+                #self.group['scores'][self.index] = iscores
                 self.index += 1        
-            self.group['params'][:] = np.array( [min_val, max_distance]).astype(np.float32)
+            #self.group['params'][:] = np.array( [min_val, max_distance]).astype(np.float32)
+            self.data_annotations[self.name]["params"] = [min_val, max_distance]
+
+    def write_annotations(self):
+        with open(self.json_filename,'w') as f:
+            json.dump(self.data_annotations, f)
 
     def __del__(self):
         ''' Close the file when delete the class '''
+        if not self.json_filename is None:
+            self.write_annotations()
         if not self.hf is None:
             self.hf.close()
 
