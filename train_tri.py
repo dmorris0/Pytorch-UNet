@@ -286,7 +286,7 @@ if __name__ == '__main__':
         elif run==9:
             args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.9,2.0),  dilate=2.5, target_downscale=4)
 
-
+        print(80*"=")
         logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
         #device = torch.device('cpu')
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
