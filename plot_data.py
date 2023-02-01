@@ -8,13 +8,13 @@ from synth_data import DrawData
 
 if __name__=="__main__":
 
-    run = 7
+    run = 4
 
     dirname = os.path.dirname(__file__)
     dir_output = os.path.join(dirname,'output',f'run_{run:03d}','val',)
 
-    filename = os.path.join(dir_output, 'val_step_05000.h5')
+    filename = os.path.join(dir_output, 'val_step_018.h5')
 
-    dd = DrawData(filename, max_distance=2)
+    dd = DrawData(filename)
     dd.plot()
     

@@ -27,6 +27,7 @@ dataset_path = os.path.join( os.path.dirname(dirname), 'cvdemos', 'image')
 sys.path.append(dataset_path)
 from image_dataset import ImageData
 from synth_data import DrawData
+from heatmap_score import Peaks, MatchScore
 
 if os.name == 'nt':
     datadir = 'D:/Data/Triangles'
@@ -72,6 +73,7 @@ def train_model(
     os.makedirs(dir_output,exist_ok=True)
     dir_val_output = os.path.join(dir_output,'val')
     os.makedirs(dir_val_output,exist_ok=True)
+    dir_train_output = os.path.join(dir_output,'train')
 
     # (Initialize logging)
     experiment = wandb.init(project='U-Net', resume='allow', anonymous='must')
@@ -114,20 +116,20 @@ def train_model(
             inputs, targets, alpha=focal_loss_ag[0], gamma=focal_loss_ag[1], reduction='mean')
 
     global_step = 0
+    val_step = 0
 
-    #for epoch in range(1, 1 + 1):
-    #    with tqdm(total=n_train, desc=f'Epoch {epoch}/{epochs}', unit='img') as pbar:
-    #        for batch in train_loader:
-    #            images, true_masks = batch['image'], batch['targets']
-
+    peaks = Peaks(1, device)
+    matches = MatchScore(max_distance = max_distance/target_downscale)
+    tscores = []
+    bscores = []
 
     # 5. Begin training
     for epoch in range(1, epochs + 1):
         model.train()
         epoch_loss = 0
         with tqdm(total=n_train, desc=f'Epoch {epoch}/{epochs}', unit='img') as pbar:
-            for batch in train_loader:
-                images, true_masks = batch['image'], batch['targets']
+            for nb, batch in enumerate(train_loader):
+                images, true_masks, centers, ncen = batch['image'], batch['targets'], batch['centers'], batch['ncen']
 
                 assert images.shape[1] == model.n_channels, \
                     f'Network has been defined with {model.n_channels} input channels, ' \
@@ -142,6 +144,10 @@ def train_model(
                     masks_pred = model(images)
                     if model.n_classes == 1:
                         loss = criterion(masks_pred, true_masks)
+                        detections = peaks.peak_coords( masks_pred.detach(), min_val=0.)                        
+                        tscores = matches.calc_match_scores( detections, centers.detach()/target_downscale, ncen.detach() )
+                        tscores.append(np.concatenate( ((global_step,loss.item(),),tscores.sum(axis=0)) ))
+
                         #loss += dice_loss(F.sigmoid(masks_pred.squeeze(1)), true_masks.float(), multiclass=False)
                     else:
                         loss = criterion(masks_pred, true_masks)
@@ -165,7 +171,7 @@ def train_model(
                     'step': global_step,
                     'epoch': epoch
                 })
-                pbar.set_postfix(**{'loss (batch)': loss.item()})
+                pbar.set_postfix(**{'loss ': epoch_loss/(nb+1)})
 
                 # Evaluation round
                 #division_step = (n_train // (10 * batch_size))
@@ -180,16 +186,18 @@ def train_model(
                             if not torch.isinf(value.grad).any():
                                 histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
 
-                        val_score, val_dice, val_pr, val_re = evaluate_bce(
-                            model, val_loader, device, criterion, amp, target_downscale, max_distance,
-                            os.path.join(dir_val_output,f'val_step_{global_step:05d}.h5') )
+                        val_loss, scores, val_dice, val_pr, val_re = evaluate_bce(
+                            model, val_loader, device, criterion, amp, target_downscale, max_distance, global_step,
+                            os.path.join(dir_val_output,f'val_step_{val_step:03d}.h5') )
+                        bscores.append( np.concatenate( ((global_step,val_loss,),scores) ) )
+                        val_step += 1
                         scheduler.step(val_dice)
 
-                        logging.info(f'Validation Loss {val_score:.3f}, Dice {val_dice:.3f}, Pr {val_pr:.3f}, Re {val_re:.3f}')
+                        logging.info(f'Validation Loss {val_loss:.3f}, Dice {val_dice:.3f}, Pr {val_pr:.3f}, Re {val_re:.3f}')
                         try:
                             experiment.log({
                                 'learning rate': optimizer.param_groups[0]['lr'],
-                                'validation loss': val_score,
+                                'validation loss': val_loss,
                                 'validation dice': val_dice,
                                 'images': wandb.Image(images[0].cpu()),
                                 'masks': {
@@ -209,25 +217,8 @@ def train_model(
             Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
             state_dict = model.state_dict()
             # state_dict['mask_values'] = dataset.mask_values
-            torch.save(state_dict, str(dir_checkpoint / 'checkpoint_epoch{}.pth'.format(epoch)))
+            torch.save(state_dict, os.path.join(dir_checkpoint,f'checkpoint_epoch{epoch:03d}.pth'))
             logging.info(f'Checkpoint {epoch} saved!')
-
-
-def get_args():
-    parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
-    parser.add_argument('--epochs', '-e', metavar='E', type=int, default=5, help='Number of epochs')
-    parser.add_argument('--batch-size', '-b', dest='batch_size', metavar='B', type=int, default=4, help='Batch size')
-    parser.add_argument('--learning-rate', '-l', metavar='LR', type=float, default=1e-5,
-                        help='Learning rate', dest='lr')
-    parser.add_argument('--load', '-f', type=str, default=False, help='Load model from a .pth file')
-    parser.add_argument('--scale', '-s', type=float, default=0.5, help='Downscaling factor of the images')
-    parser.add_argument('--validation', '-v', dest='val', type=float, default=10.0,
-                        help='Percent of the data that is used as validation (0-100)')
-    parser.add_argument('--amp', action='store_true', default=False, help='Use mixed precision')
-    parser.add_argument('--convtrans', action='store_true', default=False, help='Use transpose convolution for upsampling')
-    parser.add_argument('--classes', '-c', type=int, default=1, help='Number of classes')
-
-    return parser.parse_args()
 
 class Args():
     def __init__(self,
@@ -263,9 +254,8 @@ class Args():
 
 
 if __name__ == '__main__':
-    # args = get_args()
 
-    runlist = [2]
+    runlist = [5, 6]
     for run in runlist:
         if run==1:
             args = Args(run, input_data='set10.h5', epochs=4, focal_loss_ag=None)
@@ -275,15 +265,17 @@ if __name__ == '__main__':
         elif run==3:
             args = Args(run, input_data='set10.h5', epochs=5, focal_loss_ag=(0.9,2.0), dilate=2.5, target_downscale=4 )
         elif run==4:
-            args = Args(run, input_data='set2000.h5', focal_loss_ag=None,       dilate=0., target_downscale=4)
+            args = Args(run, input_data='set2000.h5', focal_loss_ag=None,       dilate=2.5, target_downscale=4)
         elif run==5:
-            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.25,2.0), dilate=0., target_downscale=4)
+            args = Args(run, input_data='set2000.h5', focal_loss_ag=None,       dilate=0., target_downscale=4)
         elif run==6:
-            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.5,2.0), dilate=0.,  target_downscale=4)
+            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.9,2.0),  dilate=0.,  target_downscale=4)
         elif run==7:
-            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.9,2.0),  dilate=0., target_downscale=4)
+            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.9,2.0),  dilate=0,   target_downscale=4,
+                            load='/mnt/home/dmorris/repos/Pytorch-UNet/output/run_006/checkpoints/checkpoint_epoch009.pth')
         elif run==8:
-            args = Args(run, input_data='set2000.h5', focal_loss_ag=None,  dilate=2.5, target_downscale=4)
+            args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.9,2.0),  dilate=2.5, target_downscale=4)
+                    #        load='C:/Users/morri/Source/Repos/Pytorch-UNet/checkpoints/checkpoint_epoch5.pth')
         elif run==9:
             args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.9,2.0),  dilate=2.5, target_downscale=4)
 

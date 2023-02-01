@@ -13,7 +13,7 @@ from heatmap_score import Peaks, MatchScore
 
 class SaveResults:
 
-    def __init__(self, h5filename, batch, Nb, name="validation"):
+    def __init__(self, h5filename, batch, Nb, step, name="validation"):
 
         if h5filename:
             self.hf = h5py.File(h5filename, 'w')
@@ -43,7 +43,8 @@ class SaveResults:
                                  name: {"targets": {},
                                         "scores": {},
                                         "max_targets": batch['centers'].shape[2],
-                                        "params": []
+                                        "params": [],
+                                        "step": step,
                                         }
                                  }
         self.index=0    
@@ -75,7 +76,7 @@ class SaveResults:
             self.hf.close()
 
 @torch.inference_mode()
-def evaluate_bce(net, dataloader, device, criterion, amp, target_downscale, max_distance, h5filename=None):
+def evaluate_bce(net, dataloader, device, criterion, amp, target_downscale, max_distance, step, h5filename=None):
     net.eval()
     num_val_batches = len(dataloader)
     bce = 0
@@ -104,8 +105,8 @@ def evaluate_bce(net, dataloader, device, criterion, amp, target_downscale, max_
             bscores = matches.calc_match_scores( detections, centers/target_downscale, ncen )
 
             if save is None:
-                save = SaveResults(h5filename=h5filename, batch=batch, Nb=Nb)
-            save.add( image, centers, ncen, torch.sigmoid(mask_pred), bscores, torch.sigmoid(torch.Tensor([min_val])).item(), down_max_distance )
+                save = SaveResults(h5filename=h5filename, batch=batch, Nb=Nb, step=step)
+            save.add( image, centers, ncen, mask_pred, bscores, min_val, down_max_distance )
 
             scores += bscores.sum(axis=0)
 
@@ -131,4 +132,4 @@ def evaluate_bce(net, dataloader, device, criterion, amp, target_downscale, max_
     precision = scores[0]/ (scores[0]+scores[1]+1e-3)
     recall = scores[0]/ (scores[0]+scores[2]+1e-3)
 
-    return bce / max(num_val_batches, 1), dice, precision, recall
+    return bce / max(num_val_batches, 1), scores, dice, precision, recall
