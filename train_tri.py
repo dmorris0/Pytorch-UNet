@@ -32,9 +32,9 @@ from heatmap_score import Peaks, MatchScore
 if os.name == 'nt':
     datadir = 'D:/Data/Triangles'
 else:
-    datadir = '/mnt/home/dmorris/Data/Triangles'
+    datadir = '/mnt/home/dmorris/Data/eggs'
 
-datafile = os.path.join(datadir, 'set10.h5')
+#datafile = os.path.join(datadir, 'set10.h5')
 #datafile = os.path.join(datadir, 'set2000.h5')
 
 def train_model(
@@ -60,10 +60,16 @@ def train_model(
 ):
 
     # 1. Create dataset
-    train_set = ImageData(datafile,'train',     radius=dilate, target_downscale=target_downscale)
-    val_set   = ImageData(datafile,'validation',radius=dilate, target_downscale=target_downscale)
+    if False:
+        train_set = ImageData(datafile,'train',     radius=dilate, target_downscale=target_downscale, rand_flip=True)
+        val_set   = ImageData(datafile,'validation',radius=dilate, target_downscale=target_downscale)
+        n_train, n_val = len(train_set), len(val_set)
+    else:
+        dataset = ImageData(datafile,'train',     radius=dilate, target_downscale=target_downscale, rand_flip=True)
+        n_val = int(len(dataset) * 0.1)
+        n_train = len(dataset) - n_val
+        train_set, val_set = random_split(dataset, [n_train, n_val], generator=torch.Generator().manual_seed(0))
 
-    n_train, n_val = len(train_set), len(val_set)
 
     # 3. Create data loaders
     loader_args = dict(batch_size=batch_size, num_workers=np.minimum(8,os.cpu_count()), pin_memory=True)
@@ -107,7 +113,7 @@ def train_model(
     grad_scaler = torch.cuda.amp.GradScaler(enabled=amp)
 
     # Find positive weights for single-pixel positives:
-    pos_weight = torch.Tensor([train_set.pos_weight/target_downscale**2]).to(device)
+    pos_weight = torch.Tensor([dataset.pos_weight/target_downscale**2]).to(device)
     print('Pos Weight:', pos_weight[0].item())
     if focal_loss_ag is None:
         criterion = nn.CrossEntropyLoss() if model.n_classes > 1 else nn.BCEWithLogitsLoss(pos_weight=pos_weight)
@@ -255,7 +261,7 @@ class Args():
 
 if __name__ == '__main__':
 
-    runlist = [5, 6]
+    runlist = [10]
     for run in runlist:
         if run==1:
             args = Args(run, input_data='set10.h5', epochs=4, focal_loss_ag=None)
@@ -278,13 +284,16 @@ if __name__ == '__main__':
                     #        load='C:/Users/morri/Source/Repos/Pytorch-UNet/checkpoints/checkpoint_epoch5.pth')
         elif run==9:
             args = Args(run, input_data='set2000.h5', focal_loss_ag=(0.9,2.0),  dilate=2.5, target_downscale=4)
+        elif run==10:
+            args = Args(run, input_data='egg_images.h5', focal_loss_ag=(0.9,2.0),  dilate=0., target_downscale=4)
 
         print(80*"=")
         logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
         if os.name == 'nt':        
             device = torch.device('cpu')  # My windows GPU is very slow
         else:
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            device = torch.device('cpu')  # My windows GPU is very slow
+            #device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logging.info(f'Using device {device}')
 
         if args.target_downscale==1:
