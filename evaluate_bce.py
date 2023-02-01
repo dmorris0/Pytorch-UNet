@@ -82,7 +82,8 @@ def evaluate_bce(net, dataloader, device, criterion, amp, target_downscale, max_
     scores = np.zeros( (3,) )
     peaks = Peaks(1, device)
     min_val = 0.
-    matches = MatchScore(max_distance = max_distance / target_downscale)
+    down_max_distance = max_distance / target_downscale
+    matches = MatchScore(max_distance = down_max_distance)
     save = None    
     Nb = len(dataloader)
 
@@ -104,7 +105,7 @@ def evaluate_bce(net, dataloader, device, criterion, amp, target_downscale, max_
 
             if save is None:
                 save = SaveResults(h5filename=h5filename, batch=batch, Nb=Nb)
-            save.add( image, centers, ncen, torch.sigmoid(mask_pred), bscores, torch.sigmoid(torch.Tensor([min_val])).item(), max_distance )
+            save.add( image, centers, ncen, torch.sigmoid(mask_pred), bscores, torch.sigmoid(torch.Tensor([min_val])).item(), down_max_distance )
 
             scores += bscores.sum(axis=0)
 

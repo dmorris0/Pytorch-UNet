@@ -15,6 +15,6 @@ if __name__=="__main__":
 
     filename = os.path.join(dir_output, 'val_step_05000.h5')
 
-    dd = DrawData(filename) #, max_distance=8)
+    dd = DrawData(filename, max_distance=2)
     dd.plot()
     
