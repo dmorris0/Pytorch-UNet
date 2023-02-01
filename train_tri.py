@@ -265,7 +265,7 @@ class Args():
 if __name__ == '__main__':
     # args = get_args()
 
-    runlist = [2]
+    runlist = [4,5,6,7]
     for run in runlist:
         if run==1:
             args = Args(run, input_data='set10.h5', epochs=4, focal_loss_ag=None)
