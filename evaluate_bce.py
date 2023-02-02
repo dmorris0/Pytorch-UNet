@@ -132,4 +132,4 @@ def evaluate_bce(net, dataloader, device, criterion, amp, target_downscale, max_
     precision = scores[0]/ (scores[0]+scores[1]+1e-3)
     recall = scores[0]/ (scores[0]+scores[2]+1e-3)
 
-    return bce / max(num_val_batches, 1), scores, dice, precision, recall
+    return bce.item() / max(num_val_batches, 1), scores, dice, precision, recall

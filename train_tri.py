@@ -66,13 +66,14 @@ def train_model(
         n_train, n_val = len(train_set), len(val_set)
     else:
         dataset = ImageData(datafile,'train',     radius=dilate, target_downscale=target_downscale, rand_flip=True)
-        n_val = int(len(dataset) * 0.1)
+        n_val = int(len(dataset) * 0.12)
         n_train = len(dataset) - n_val
         train_set, val_set = random_split(dataset, [n_train, n_val], generator=torch.Generator().manual_seed(0))
 
 
     # 3. Create data loaders
-    loader_args = dict(batch_size=batch_size, num_workers=np.minimum(8,os.cpu_count()), pin_memory=True)
+    num_workers = 0 # np.minimum(8,os.cpu_count())
+    loader_args = dict(batch_size=batch_size, num_workers=num_workers, pin_memory=True)
     train_loader = DataLoader(train_set, shuffle=True, **loader_args)
     val_loader = DataLoader(val_set, shuffle=False, drop_last=True, **loader_args)
 
@@ -80,6 +81,7 @@ def train_model(
     dir_val_output = os.path.join(dir_output,'val')
     os.makedirs(dir_val_output,exist_ok=True)
     dir_train_output = os.path.join(dir_output,'train')
+    os.makedirs(dir_train_output,exist_ok=True)
 
     # (Initialize logging)
     experiment = wandb.init(project='U-Net', resume='allow', anonymous='must')
@@ -151,8 +153,8 @@ def train_model(
                     if model.n_classes == 1:
                         loss = criterion(masks_pred, true_masks)
                         detections = peaks.peak_coords( masks_pred.detach(), min_val=0.)                        
-                        tscores = matches.calc_match_scores( detections, centers.detach()/target_downscale, ncen.detach() )
-                        tscores.append(np.concatenate( ((global_step,loss.item(),),tscores.sum(axis=0)) ))
+                        iscores = matches.calc_match_scores( detections, centers.detach()/target_downscale, ncen.detach() )
+                        tscores.append(np.concatenate( ((global_step,loss.item(),),iscores.sum(axis=0)) ))
 
                         #loss += dice_loss(F.sigmoid(masks_pred.squeeze(1)), true_masks.float(), multiclass=False)
                     else:
@@ -194,7 +196,7 @@ def train_model(
 
                         val_loss, scores, val_dice, val_pr, val_re = evaluate_bce(
                             model, val_loader, device, criterion, amp, target_downscale, max_distance, global_step,
-                            os.path.join(dir_val_output,f'val_step_{val_step:03d}.h5') )
+                            os.path.join(dir_val_output,f'step_{val_step:03d}.h5') )
                         bscores.append( np.concatenate( ((global_step,val_loss,),scores) ) )
                         val_step += 1
                         scheduler.step(val_dice)
@@ -292,14 +294,13 @@ if __name__ == '__main__':
         if os.name == 'nt':        
             device = torch.device('cpu')  # My windows GPU is very slow
         else:
-            device = torch.device('cpu')  # My windows GPU is very slow
-            #device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logging.info(f'Using device {device}')
 
         if args.target_downscale==1:
-            model = UNetSmall(n_channels=1, n_classes=args.classes, bilinear=not args.convtrans)
+            model = UNetSmall(n_channels=3, n_classes=args.classes, bilinear=not args.convtrans)
         elif args.target_downscale==4:
-            model = UNetSmallQuarter(n_channels=1, n_classes=args.classes, bilinear=not args.convtrans)
+            model = UNetSmallQuarter(n_channels=3, n_classes=args.classes, bilinear=not args.convtrans)
         else:
             raise Exception(f'Invalid target_downscale: {args.target_downscale}')
 
