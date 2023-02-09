@@ -8,6 +8,7 @@ import h5py, json
 import sys
 sys.path.append('../cvdemos/image')
 from heatmap_score import Peaks, MatchScore
+from image_dataset import up_scale_coords
 
 # from utils.dice_score import multiclass_dice_coeff, dice_coeff
 
@@ -49,9 +50,9 @@ class SaveResults:
                                  }
         self.index=0    
     
-    def add(self, images, centers, ncens, mask_preds, scores, min_val, max_distance):
+    def add(self, images, centers, ncens, mask_preds, scores, min_val, max_distance, target_downscale):
         if not self.hf is None:
-            for img, cens, ncen, preds, iscores in zip(images.cpu().numpy(), centers.cpu().numpy(), ncens.cpu().numpy(), mask_preds.cpu().numpy(), scores):
+            for img, cens, preds, iscores in zip(images.cpu().numpy(), centers.cpu().numpy(), mask_preds.cpu().numpy(), scores):
                 self.group['images'][self.index] = (img.transpose((1,2,0))*255).astype(np.uint8)
                 self.group['heatmap'][self.index] = preds[0].astype(np.float32)
 
@@ -62,7 +63,7 @@ class SaveResults:
                 #self.group['scores'][self.index] = iscores
                 self.index += 1        
             #self.group['params'][:] = np.array( [min_val, max_distance]).astype(np.float32)
-            self.data_annotations[self.name]["params"] = [min_val, max_distance]
+            self.data_annotations[self.name]["params"] = [min_val, max_distance, target_downscale]
 
     def write_annotations(self):
         with open(self.json_filename,'w') as f:
@@ -83,8 +84,7 @@ def evaluate_bce(net, dataloader, device, criterion, amp, target_downscale, max_
     scores = np.zeros( (3,) )
     peaks = Peaks(1, device)
     min_val = 0.
-    down_max_distance = max_distance / target_downscale
-    matches = MatchScore(max_distance = down_max_distance)
+    matches = MatchScore(max_distance = max_distance)
     save = None    
     Nb = len(dataloader)
 
@@ -102,11 +102,11 @@ def evaluate_bce(net, dataloader, device, criterion, amp, target_downscale, max_
             mask_pred = net(image)
 
             detections = peaks.peak_coords( mask_pred, min_val=0.)
-            bscores = matches.calc_match_scores( detections, centers/target_downscale, ncen )
+            bscores = matches.calc_match_scores( up_scale_coords( detections, target_downscale ), centers, ncen )
 
             if save is None:
                 save = SaveResults(h5filename=h5filename, batch=batch, Nb=Nb, step=step)
-            save.add( image, centers, ncen, mask_pred, bscores, min_val, down_max_distance )
+            save.add( image, centers, ncen, mask_pred, bscores, min_val, max_distance, target_downscale )
 
             scores += bscores.sum(axis=0)
 
