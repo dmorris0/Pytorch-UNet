@@ -8,7 +8,7 @@ from synth_data import DrawData
 
 if __name__=="__main__":
 
-    run = 10
+    run = 1
 
     dirname = os.path.dirname(__file__)
     dir_output = os.path.join(dirname,'output',f'run_{run:03d}','val',)
