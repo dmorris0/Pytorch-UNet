@@ -10,3 +10,5 @@ wandb/
 *.h5
 *.json
 *.csv
+out_eggs/
+scores.png

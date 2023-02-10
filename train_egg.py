@@ -114,7 +114,7 @@ def train_model(
 
     peaks = Peaks(1, device)
     matches = MatchScore(max_distance = args.max_distance/args.target_downscale)
-    tscores = []
+    #tscores = []
     etscores = []
     bscores = []
 
@@ -142,7 +142,7 @@ def train_model(
                         loss = criterion(masks_pred, true_masks)
                         detections = peaks.peak_coords( masks_pred.detach(), min_val=0.)                        
                         iscores = matches.calc_match_scores( detections, centers.detach()/args.target_downscale, ncen.detach() )
-                        tscores.append( np.concatenate( ((global_step,loss.item(),),iscores.sum(axis=0)) ) )
+                        #tscores.append( np.concatenate( ((global_step,loss.item(),),iscores.sum(axis=0)) ) )
                         totscores += np.concatenate( ((1,loss.item(),),iscores.sum(axis=0)) )
 
                         #loss += dice_loss(F.sigmoid(masks_pred.squeeze(1)), true_masks.float(), multiclass=False)
@@ -172,27 +172,31 @@ def train_model(
 
                 # Evaluation round
                 #division_step = (n_train // (10 * batch_size))
-                division_step = len(train_loader)//2
-                if division_step > 0:
-                    if global_step % division_step == 0:
-                        histograms = {}
-                        for tag, value in model.named_parameters():
-                            tag = tag.replace('/', '.')
-                            if not torch.isinf(value).any():
-                                histograms['Weights/' + tag] = wandb.Histogram(value.data.cpu())
-                            if not torch.isinf(value.grad).any():
-                                histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
+                #division_step = len(train_loader) 
+                #if division_step > 0:
+                #    if global_step % division_step == 0:
+                # The above allows validation to run during a training epoch.  I commented it out and shifted the below
+                # left 3 tabs so that it runs at the end of an epoch 
+            histograms = {}
+            for tag, value in model.named_parameters():
+                tag = tag.replace('/', '.')
+                if not torch.isinf(value).any():
+                    histograms['Weights/' + tag] = wandb.Histogram(value.data.cpu())
+                if not torch.isinf(value.grad).any():
+                    histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
 
-                        val_loss, scores, val_dice, val_pr, val_re = evaluate_bce(
-                            model, val_loader, device, criterion, args.amp, args.target_downscale, args.max_distance, global_step,
-                            os.path.join(run_dir,'val',f'step_{val_step:03d}.h5') )
-                        bscores.append( np.concatenate( ((global_step,val_loss,),scores) ) )
-                        val_step += 1
-                        scheduler.step(val_dice)
+                val_loss, scores, val_dice, val_pr, val_re = evaluate_bce(
+                model, val_loader, device, criterion, args.amp, args.target_downscale, args.max_distance, global_step,
+                os.path.join(run_dir,'val',f'step_{val_step:03d}.h5') )
+            if val_step>0 and (val_step-1)%10:
+                os.remove(os.path.join(run_dir,'val',f'step_{val_step:03d}.h5'))  # delete previous file since pretty big
+            bscores.append( np.concatenate( ((global_step,val_loss,),scores) ) )
+            val_step += 1
+            scheduler.step(val_dice)
 
-                        logging.info(f'Validation Loss {val_loss:.6f}, Dice {val_dice:.3f}, Pr {val_pr:.3f}, Re {val_re:.3f}')
-                        try:
-                            experiment.log({
+            logging.info(f'Validation Loss {val_loss:.6f}, Dice {val_dice:.3f}, Pr {val_pr:.3f}, Re {val_re:.3f}')
+            try:
+                experiment.log({
                                 'learning rate': optimizer.param_groups[0]['lr'],
                                 'validation loss': val_loss,
                                 'validation dice': val_dice,
@@ -205,20 +209,20 @@ def train_model(
                                 'epoch': epoch,
                                 **histograms
                             })
-                        except:
-                            pass
+            except:
+                pass
+
             etscores.append( np.array([global_step, totscores[1]/totscores[0], *totscores[2:]]))
-            save_scores(os.path.join(run_dir,"train_epoch_scores.csv"), etscores)
-            save_scores(os.path.join(run_dir,"train_scores.csv"), tscores)
+            save_scores(os.path.join(run_dir,"train_scores.csv"), etscores)
             save_scores(os.path.join(run_dir,"val_scores.csv"), bscores)
-            plot_scores(tscores, etscores, bscores, os.path.join(run_dir,"scores.png"))
+            plot_scores(etscores, bscores, os.path.join(run_dir,"scores.png"))
 
 
         if args.save_checkpoint:
             state_dict = model.state_dict()
             # state_dict['mask_values'] = dataset.mask_values
             torch.save(state_dict, os.path.join(dir_checkpoint,f'checkpoint_epoch{epoch:03d}.pth'))
-            logging.info(f'Checkpoint {epoch} saved!')
+            # logging.info(f'Checkpoint {epoch} saved!')
 
 class Args():
     def __init__(self,
@@ -271,7 +275,7 @@ class Args():
 
 if __name__ == '__main__':
 
-    runlist = [3]
+    runlist = [4]
     for run in runlist:
         if run==1:
             args = Args(run, epochs = 10,
@@ -281,7 +285,7 @@ if __name__ == '__main__':
                         target_downscale=4,
                         num_workers=0)
         elif run==2:
-            args = Args(run, epochs = 40,
+            args = Args(run, epochs = 80,
                         data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
                         focal_loss_ag=(0.9,2.0),  
                         dilate=0.,  
@@ -294,7 +298,12 @@ if __name__ == '__main__':
                         target_downscale=4,
                         num_workers=0,
                         load=r"C:\Users\morri\Source\Repos\Pytorch-UNet\out_eggs\001\checkpoints\checkpoint_epoch010.pth")
-
+        elif run==4:
+            args = Args(run, epochs = 100,
+                        data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
+                        focal_loss_ag=(0.25,2.0),  
+                        dilate=0.,  
+                        target_downscale=4)
         print(80*"=")
         logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
         if os.name == 'nt':        

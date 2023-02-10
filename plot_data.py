@@ -31,24 +31,23 @@ def get_measures(scores):
     recall = scores[:,0]/ (scores[:,0]+scores[:,2]+1e-3)
     return dice, precision, recall
 
-def plot_scores(train_scores, train_epoch_scores, val_scores, filename=None):
+def plot_scores(train_scores, val_scores, filename=None):
     fig = plt.figure(num='Scores', figsize=(10,12))
     ax = fig.add_subplot(3,1,1)
-    train_scores, train_epoch_scores, val_scores = np.array(train_scores), np.array(train_epoch_scores), np.array(val_scores)
-    ax.plot( train_scores[:,0], train_scores[:,1],'.',label='train')
-    ax.plot( train_epoch_scores[:,0], train_epoch_scores[:,1],'-',label='train av')
+    train_scores, val_scores = np.array(train_scores), np.array(val_scores)
+    ax.plot( train_scores[:,0], train_scores[:,1],'-',label='train')
     ax.plot( val_scores[:,0], val_scores[:,1],'-',label='val')
     ax.grid()
-    ax.set_xlabel('Step')
     ax.legend()
     ax.set_title('Loss')
+    ax.set_yscale('log')
     ax = fig.add_subplot(3,1,2)
-    dice, precision, recall = get_measures(train_epoch_scores[:,2:])
-    ax.plot(train_epoch_scores[:,0], dice,'-',label='Dice')
-    ax.plot(train_epoch_scores[:,0], precision,'-',label='Precision')
-    ax.plot(train_epoch_scores[:,0], recall,'-',label='Recall')
-    ax.set_xlabel('Step')
+    dice, precision, recall = get_measures(train_scores[:,2:])
+    ax.plot(train_scores[:,0], dice,'-',label='Dice')
+    ax.plot(train_scores[:,0], precision,'-',label='Precision')
+    ax.plot(train_scores[:,0], recall,'-',label='Recall')
     ax.set_title('Train')
+    ax.set_ylim( 0, 1)
     ax.grid()
     ax.legend()
     ax = fig.add_subplot(3,1,3)
@@ -56,8 +55,8 @@ def plot_scores(train_scores, train_epoch_scores, val_scores, filename=None):
     ax.plot(val_scores[:,0], dice,'-',label='Dice')
     ax.plot(val_scores[:,0], precision,'-',label='Precision')
     ax.plot(val_scores[:,0], recall,'-',label='Recall')
-    ax.set_xlabel('Step')
     ax.set_title('Validation')
+    ax.set_ylim( 0, 1)
     ax.grid()
     ax.legend()
     plt.show(block=False)
@@ -67,7 +66,7 @@ def plot_scores(train_scores, train_epoch_scores, val_scores, filename=None):
 
 if __name__=="__main__":
 
-    run = 3
+    run = 2
 
     if not os.name =="nt":
         global_data_dir = '/mnt/home/dmorris/Data/eggs'
@@ -80,11 +79,11 @@ if __name__=="__main__":
     output_dir ='out_eggs'
     run_dir = os.path.join(os.path.dirname(__file__), output_dir, f'{run:03d}')
 
-    etscores = read_scores(os.path.join(run_dir,"train_epoch_scores.csv"))
+    #etscores = read_scores(os.path.join(run_dir,"train_epoch_scores.csv"))
     tscores = read_scores(os.path.join(run_dir,"train_scores.csv"))
     vscores = read_scores(os.path.join(run_dir,"val_scores.csv"))
 
-    plot_scores(tscores, etscores, vscores)    
+    plot_scores(tscores, vscores)    
 
     files = [str(x) for x in list(Path(os.path.join(run_dir,'val')).glob('*.h5'))]
     files.sort()
