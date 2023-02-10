@@ -9,3 +9,4 @@ venv/
 wandb/
 *.h5
 *.json
+*.csv
