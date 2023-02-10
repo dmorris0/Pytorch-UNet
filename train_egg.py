@@ -1,7 +1,5 @@
-import argparse
 import logging
 import os
-import random
 import sys
 import torch
 import torch.nn as nn
@@ -14,10 +12,12 @@ from torch import optim
 from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 import numpy as np
+import platform
 
 import wandb
 from evaluate_bce import evaluate_bce
 from unet import UNet, UNetSmall, UNetSmallQuarter
+from plot_data import save_scores, plot_scores
 
 dirname = os.path.dirname(__file__)
 dataset_path = os.path.join( os.path.dirname(dirname), 'cvdemos', 'image')
@@ -26,6 +26,13 @@ sys.path.append(dataset_path)
 from image_dataset import ImageData
 from synth_data import DrawData
 from heatmap_score import Peaks, MatchScore
+
+if not os.name =="nt":
+    global_data_dir = '/mnt/home/dmorris/Data/eggs'
+elif platform.node()=='DM-O':
+    global_data_dir = 'D:/Data/Eggs/data'
+else:
+    raise Exception(f"Unknown platform: {platform.node()}")
 
 
 def train_model(
@@ -37,6 +44,7 @@ def train_model(
     if args.data_validation is None:
         dataset = ImageData(os.path.join(args.data_dir, args.data_train),'train', 
                             radius=args.dilate, target_downscale=args.target_downscale, rand_flip=True)
+        data_pos_weight = dataset.pos_weight
         n_val = int(len(dataset) * 0.12)
         n_train = len(dataset) - n_val
         train_set, val_set = random_split(dataset, [n_train, n_val], generator=torch.Generator().manual_seed(0))
@@ -46,6 +54,7 @@ def train_model(
         val_set   = ImageData(os.path.join(args.data_dir, args.data_validation),'validation',
                               radius=args.dilate, target_downscale=args.target_downscale)
         n_train, n_val = len(train_set), len(val_set)
+        data_pos_weight = train_set.pos_weight
 
 
     # 3. Create data loaders
@@ -54,11 +63,11 @@ def train_model(
     train_loader = DataLoader(train_set, shuffle=True, **loader_args)
     val_loader = DataLoader(val_set, shuffle=False, drop_last=True, **loader_args)
 
-    os.makedirs(args.output_dir,exist_ok=True)
-    dir_val_output = os.path.join(args.output_dir,'val')
-    os.makedirs(dir_val_output,exist_ok=True)
-    dir_train_output = os.path.join(args.output_dir,'train')
-    os.makedirs(dir_train_output,exist_ok=True)
+    run_dir = os.path.join(os.path.dirname(__file__), args.output_dir, f'{run:03d}')
+    os.makedirs( os.path.join(run_dir,'val'), exist_ok=True)
+    os.makedirs( os.path.join(run_dir,'train'), exist_ok=True)
+    dir_checkpoint = Path(os.path.join(run_dir,'checkpoints'))
+    Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
 
     # (Initialize logging)
     experiment = wandb.init(project='U-Net', resume='allow', anonymous='must')
@@ -92,7 +101,7 @@ def train_model(
     grad_scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
 
     # Find positive weights for single-pixel positives:
-    pos_weight = torch.Tensor([train_set.pos_weight/args.target_downscale**2]).to(device)
+    pos_weight = torch.Tensor([data_pos_weight/args.target_downscale**2]).to(device)
     print('Pos Weight:', pos_weight[0].item())
     if args.focal_loss_ag is None:
         criterion = nn.CrossEntropyLoss() if model.n_classes > 1 else nn.BCEWithLogitsLoss(pos_weight=pos_weight)
@@ -106,6 +115,7 @@ def train_model(
     peaks = Peaks(1, device)
     matches = MatchScore(max_distance = args.max_distance/args.target_downscale)
     tscores = []
+    etscores = []
     bscores = []
 
     # 5. Begin training
@@ -113,6 +123,7 @@ def train_model(
         model.train()
         epoch_loss = 0
         with tqdm(total=n_train, desc=f'Epoch {epoch}/{args.epochs}', unit='img') as pbar:
+            totscores = np.zeros( (5,))
             for nb, batch in enumerate(train_loader):
                 images, true_masks, centers, ncen = batch['image'], batch['targets'], batch['centers'], batch['ncen']
 
@@ -131,7 +142,8 @@ def train_model(
                         loss = criterion(masks_pred, true_masks)
                         detections = peaks.peak_coords( masks_pred.detach(), min_val=0.)                        
                         iscores = matches.calc_match_scores( detections, centers.detach()/args.target_downscale, ncen.detach() )
-                        tscores.append(np.concatenate( ((global_step,loss.item(),),iscores.sum(axis=0)) ))
+                        tscores.append( np.concatenate( ((global_step,loss.item(),),iscores.sum(axis=0)) ) )
+                        totscores += np.concatenate( ((1,loss.item(),),iscores.sum(axis=0)) )
 
                         #loss += dice_loss(F.sigmoid(masks_pred.squeeze(1)), true_masks.float(), multiclass=False)
                     else:
@@ -173,12 +185,12 @@ def train_model(
 
                         val_loss, scores, val_dice, val_pr, val_re = evaluate_bce(
                             model, val_loader, device, criterion, args.amp, args.target_downscale, args.max_distance, global_step,
-                            os.path.join(dir_val_output,f'step_{val_step:03d}.h5') )
+                            os.path.join(run_dir,'val',f'step_{val_step:03d}.h5') )
                         bscores.append( np.concatenate( ((global_step,val_loss,),scores) ) )
                         val_step += 1
                         scheduler.step(val_dice)
 
-                        logging.info(f'Validation Loss {val_loss:.3f}, Dice {val_dice:.3f}, Pr {val_pr:.3f}, Re {val_re:.3f}')
+                        logging.info(f'Validation Loss {val_loss:.6f}, Dice {val_dice:.3f}, Pr {val_pr:.3f}, Re {val_re:.3f}')
                         try:
                             experiment.log({
                                 'learning rate': optimizer.param_groups[0]['lr'],
@@ -195,11 +207,14 @@ def train_model(
                             })
                         except:
                             pass
+            etscores.append( np.array([global_step, totscores[1]/totscores[0], *totscores[2:]]))
+            save_scores(os.path.join(run_dir,"train_epoch_scores.csv"), etscores)
+            save_scores(os.path.join(run_dir,"train_scores.csv"), tscores)
+            save_scores(os.path.join(run_dir,"val_scores.csv"), bscores)
+            plot_scores(tscores, etscores, bscores, os.path.join(run_dir,"scores.png"))
 
 
         if args.save_checkpoint:
-            dir_checkpoint = Path(os.path.join(args.output_dir,'checkpoints'))
-            Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
             state_dict = model.state_dict()
             # state_dict['mask_values'] = dataset.mask_values
             torch.save(state_dict, os.path.join(dir_checkpoint,f'checkpoint_epoch{epoch:03d}.pth'))
@@ -208,7 +223,7 @@ def train_model(
 class Args():
     def __init__(self,
                  run: int,
-                 data_dir: str = '/mnt/home/dmorris/Data/eggs',
+                 data_dir: str = global_data_dir,
                  data_train: str = 'Eggs_train.h5',
                  data_validation: str = 'Eggs_validation.h5',
                  output_dir: str = 'out_eggs',
@@ -256,10 +271,11 @@ class Args():
 
 if __name__ == '__main__':
 
-    runlist = [2]
+    runlist = [3]
     for run in runlist:
         if run==1:
-            args = Args(run, data_train='Eggs_train_small.h5', data_validation=None, 
+            args = Args(run, epochs = 10,
+                        data_train='Eggs_train_small.h5', data_validation=None, 
                         focal_loss_ag=None,      
                         dilate=0.,  
                         target_downscale=4,
@@ -270,6 +286,14 @@ if __name__ == '__main__':
                         focal_loss_ag=(0.9,2.0),  
                         dilate=0.,  
                         target_downscale=4)
+        elif run==3:
+            args = Args(run, epochs = 1,
+                        data_train='Eggs_train_small.h5', data_validation=None, 
+                        focal_loss_ag=None,      
+                        dilate=0.,  
+                        target_downscale=4,
+                        num_workers=0,
+                        load=r"C:\Users\morri\Source\Repos\Pytorch-UNet\out_eggs\001\checkpoints\checkpoint_epoch010.pth")
 
         print(80*"=")
         logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
