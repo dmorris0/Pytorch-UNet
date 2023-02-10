@@ -52,17 +52,12 @@ class SaveResults:
     
     def add(self, images, centers, ncens, mask_preds, scores, min_val, max_distance, target_downscale):
         if not self.hf is None:
-            for img, cens, preds, iscores in zip(images.cpu().numpy(), centers.cpu().numpy(), mask_preds.cpu().numpy(), scores):
+            for img, cens, ncen, preds, iscores in zip(images.cpu().numpy(), centers.cpu().numpy(), ncens.cpu().numpy(), mask_preds.cpu().numpy(), scores):
                 self.group['images'][self.index] = (img.transpose((1,2,0))*255).astype(np.uint8)
                 self.group['heatmap'][self.index] = preds[0].astype(np.float32)
-
-                self.data_annotations[self.name]["targets"][str(self.index)] = cens[0][:ncens[0],:].tolist()
+                self.data_annotations[self.name]["targets"][str(self.index)] = cens[0][:ncen[0,0],:].tolist()
                 self.data_annotations[self.name]["scores"][str(self.index)] = iscores.tolist()
-                #self.group['centers'][self.index] = cens[0]
-                #self.group['nobj'][self.index] = ncen[0]
-                #self.group['scores'][self.index] = iscores
                 self.index += 1        
-            #self.group['params'][:] = np.array( [min_val, max_distance]).astype(np.float32)
             self.data_annotations[self.name]["params"] = [min_val, max_distance, target_downscale]
 
     def write_annotations(self):
