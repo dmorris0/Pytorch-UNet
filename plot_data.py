@@ -1,5 +1,6 @@
 ''' Plot results
 '''
+import argparse
 import os, platform
 import csv
 import matplotlib.pyplot as plt
@@ -31,22 +32,23 @@ def get_measures(scores):
     recall = scores[:,0]/ (scores[:,0]+scores[:,2]+1e-3)
     return dice, precision, recall
 
-def plot_scores(train_scores, val_scores, filename=None):
+def plot_scores(train_scores, val_scores, run, filename=None):
     fig = plt.figure(num='Scores', figsize=(10,12))
+    fig.clf()
     ax = fig.add_subplot(3,1,1)
     train_scores, val_scores = np.array(train_scores), np.array(val_scores)
     ax.plot( train_scores[:,0], train_scores[:,1],'-',label='train')
     ax.plot( val_scores[:,0], val_scores[:,1],'-',label='val')
     ax.grid()
     ax.legend()
-    ax.set_title('Loss')
+    ax.set_title(f'Run {run} Loss, Min Train / Val: {train_scores[:,1].min():.3}  /  {val_scores[:,1].min():.3}')
     ax.set_yscale('log')
     ax = fig.add_subplot(3,1,2)
     dice, precision, recall = get_measures(train_scores[:,2:])
     ax.plot(train_scores[:,0], dice,'-',label='Dice')
     ax.plot(train_scores[:,0], precision,'-',label='Precision')
     ax.plot(train_scores[:,0], recall,'-',label='Recall')
-    ax.set_title('Train')
+    ax.set_title(f'Train, Max Dice: {dice.max():.3}')
     ax.set_ylim( 0, 1)
     ax.grid()
     ax.legend()
@@ -55,7 +57,7 @@ def plot_scores(train_scores, val_scores, filename=None):
     ax.plot(val_scores[:,0], dice,'-',label='Dice')
     ax.plot(val_scores[:,0], precision,'-',label='Precision')
     ax.plot(val_scores[:,0], recall,'-',label='Recall')
-    ax.set_title('Validation')
+    ax.set_title(f'Validation, Max Dice: {dice.max():.3}')
     ax.set_ylim( 0, 1)
     ax.grid()
     ax.legend()
@@ -66,7 +68,12 @@ def plot_scores(train_scores, val_scores, filename=None):
 
 if __name__=="__main__":
 
-    run = 2
+    parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
+    parser.add_argument('run', type=int,  help='Run number')
+
+    args = parser.parse_args()
+
+    overwrite_png = True
 
     if not os.name =="nt":
         global_data_dir = '/mnt/home/dmorris/Data/eggs'
@@ -77,13 +84,15 @@ if __name__=="__main__":
 
 
     output_dir ='out_eggs'
-    run_dir = os.path.join(os.path.dirname(__file__), output_dir, f'{run:03d}')
+    run_dir = os.path.join(os.path.dirname(__file__), output_dir, f'{args.run:03d}')
 
     #etscores = read_scores(os.path.join(run_dir,"train_epoch_scores.csv"))
     tscores = read_scores(os.path.join(run_dir,"train_scores.csv"))
     vscores = read_scores(os.path.join(run_dir,"val_scores.csv"))
 
-    plot_scores(tscores, vscores)    
+    outpng = os.path.join(run_dir,"scores.png") if overwrite_png else None
+
+    plot_scores(tscores, vscores, args.run, outpng)    
 
     files = [str(x) for x in list(Path(os.path.join(run_dir,'val')).glob('*.h5'))]
     files.sort()

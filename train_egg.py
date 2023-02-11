@@ -71,10 +71,14 @@ def train_model(
 
     # (Initialize logging)
     experiment = wandb.init(project='U-Net', resume='allow', anonymous='must')
+    wandb.run.name = f'run-{args.run}-{wandb.run.name}'
     experiment.config.update(
         dict(epochs=args.epochs, batch_size=args.batch_size, learning_rate=args.lr,
              save_checkpoint=args.save_checkpoint, img_scale=args.scale, amp=args.amp)
     )
+    with open(os.path.join(run_dir,'wandb-run-info.txt'),'w') as f:
+        print(f'{wandb.run.name}',file=f)
+        print(f'{wandb.run.get_url()}',file=f)
 
     logging.info(f'''Starting training:
         Run:              {args.run}
@@ -122,8 +126,8 @@ def train_model(
     for epoch in range(1, args.epochs + 1):
         model.train()
         epoch_loss = 0
+        totscores = np.zeros( (5,))
         with tqdm(total=n_train, desc=f'Epoch {epoch}/{args.epochs}', unit='img') as pbar:
-            totscores = np.zeros( (5,))
             for nb, batch in enumerate(train_loader):
                 images, true_masks, centers, ncen = batch['image'], batch['targets'], batch['centers'], batch['ncen']
 
@@ -176,27 +180,28 @@ def train_model(
                 #if division_step > 0:
                 #    if global_step % division_step == 0:
                 # The above allows validation to run during a training epoch.  I commented it out and shifted the below
-                # left 3 tabs so that it runs at the end of an epoch 
-            histograms = {}
-            for tag, value in model.named_parameters():
-                tag = tag.replace('/', '.')
-                if not torch.isinf(value).any():
-                    histograms['Weights/' + tag] = wandb.Histogram(value.data.cpu())
-                if not torch.isinf(value.grad).any():
-                    histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
+                # left 4 tabs so that it runs at the end of an epoch 
+        histograms = {}
+        for tag, value in model.named_parameters():
+            tag = tag.replace('/', '.')
+            if not torch.isinf(value).any():
+                histograms['Weights/' + tag] = wandb.Histogram(value.data.cpu())
+            if not torch.isinf(value.grad).any():
+                histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
 
-                val_loss, scores, val_dice, val_pr, val_re = evaluate_bce(
-                model, val_loader, device, criterion, args.amp, args.target_downscale, args.max_distance, global_step,
-                os.path.join(run_dir,'val',f'step_{val_step:03d}.h5') )
-            if val_step>0 and (val_step-1)%10:
-                os.remove(os.path.join(run_dir,'val',f'step_{val_step:03d}.h5'))  # delete previous file since pretty big
-            bscores.append( np.concatenate( ((global_step,val_loss,),scores) ) )
-            val_step += 1
-            scheduler.step(val_dice)
+        val_loss, scores, val_dice, val_pr, val_re = evaluate_bce(
+                    model, val_loader, device, criterion, args.amp, 
+                    args.target_downscale, args.max_distance, global_step,
+                    os.path.join(run_dir,'val',f'step_{val_step:03d}.h5') )
+        if val_step>0 and (val_step-1)%10:
+            os.remove(os.path.join(run_dir,'val',f'step_{val_step:03d}.h5'))  # delete previous file since pretty big
+        bscores.append( np.concatenate( ((global_step,val_loss,),scores) ) )
+        val_step += 1
+        scheduler.step(val_dice)
 
-            logging.info(f'Validation Loss {val_loss:.6f}, Dice {val_dice:.3f}, Pr {val_pr:.3f}, Re {val_re:.3f}')
-            try:
-                experiment.log({
+        logging.info(f'Validation Loss {val_loss:.3}, Dice {val_dice:.3f}, Pr {val_pr:.3f}, Re {val_re:.3f}')
+        try:
+            experiment.log({
                                 'learning rate': optimizer.param_groups[0]['lr'],
                                 'validation loss': val_loss,
                                 'validation dice': val_dice,
@@ -209,13 +214,13 @@ def train_model(
                                 'epoch': epoch,
                                 **histograms
                             })
-            except:
-                pass
+        except:
+            pass
 
-            etscores.append( np.array([global_step, totscores[1]/totscores[0], *totscores[2:]]))
-            save_scores(os.path.join(run_dir,"train_scores.csv"), etscores)
-            save_scores(os.path.join(run_dir,"val_scores.csv"), bscores)
-            plot_scores(etscores, bscores, os.path.join(run_dir,"scores.png"))
+        etscores.append( np.array([global_step, totscores[1]/totscores[0], *totscores[2:]]))
+        save_scores(os.path.join(run_dir,"train_scores.csv"), etscores)
+        save_scores(os.path.join(run_dir,"val_scores.csv"), bscores)
+        plot_scores(etscores, bscores, os.path.join(run_dir,"scores.png"))
 
 
         if args.save_checkpoint:
@@ -237,7 +242,6 @@ class Args():
                  load: str = False,     # load model from a .pth file
                  scale: float = 0.5,    # Downscaling factor of the images
                  amp: bool = False,     # Use mixed precision
-                 convtrans: bool = False,  #use transpose convolution instead of bilinear upsampling
                  classes: int = 1,      # Number of classes
                  focal_loss_ag: tuple = (0.25, 2.0),  # None for no focal loss
                  dilate: float = 0.,
@@ -248,6 +252,7 @@ class Args():
                  momentum: float = 0.999,
                  gradient_clipping: float = 1.0,
                  num_workers: int = None,
+                 max_chans: int = 64,
                  ):
         self.run = run
         self.data_dir = data_dir
@@ -260,7 +265,6 @@ class Args():
         self.load = load
         self.scale = scale
         self.amp = amp
-        self.convtrans = convtrans
         self.classes = classes
         self.focal_loss_ag = focal_loss_ag
         self.dilate = dilate
@@ -271,19 +275,21 @@ class Args():
         self.momentum = momentum
         self.gradient_clipping = gradient_clipping
         self.num_workers = num_workers
+        self.max_chans = max_chans
 
 
 if __name__ == '__main__':
 
-    runlist = [4]
+    runlist = [10]
     for run in runlist:
         if run==1:
-            args = Args(run, epochs = 10,
+            args = Args(run, epochs = 1,
                         data_train='Eggs_train_small.h5', data_validation=None, 
                         focal_loss_ag=None,      
                         dilate=0.,  
                         target_downscale=4,
-                        num_workers=0)
+                        num_workers=0,
+                        max_chans=96)
         elif run==2:
             args = Args(run, epochs = 80,
                         data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
@@ -299,11 +305,64 @@ if __name__ == '__main__':
                         num_workers=0,
                         load=r"C:\Users\morri\Source\Repos\Pytorch-UNet\out_eggs\001\checkpoints\checkpoint_epoch010.pth")
         elif run==4:
+            # Focal loss with alpha = 0.25 fails to detect eggs
             args = Args(run, epochs = 100,
                         data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
                         focal_loss_ag=(0.25,2.0),  
                         dilate=0.,  
                         target_downscale=4)
+        elif run==5:
+            # Alpha 0.99
+            args = Args(run, epochs = 100,
+                        data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
+                        focal_loss_ag=(0.99,2.0),                          
+                        dilate=0.,  
+                        target_downscale=4)
+        elif run==6:
+            # Batch size: 8
+            args = Args(run, epochs = 120,
+                        data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
+                        focal_loss_ag=(0.9,2.0),                          
+                        batch_size=8,
+                        dilate=0.,  
+                        target_downscale=4)
+        elif run==7:
+            # same as 2, but gamma of 3
+            args = Args(run, epochs = 120,
+                        data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
+                        focal_loss_ag=(0.9,3.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=64)
+        elif run==8:
+            # same as 2, but gamma of 3
+            args = Args(run, epochs = 100,
+                        data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
+                        focal_loss_ag=(0.9,4.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=64)
+        elif run==9:
+            # same as 2, except max_chans = 128
+            args = Args(run, epochs = 120,
+                        data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
+                        focal_loss_ag=(0.9,2.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=128)
+        elif run==10:
+            # same as 2, except max_chans = 128
+            args = Args(run, epochs = 100,
+                        data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
+                        focal_loss_ag=(0.9,3.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=128)
+            
         print(80*"=")
         logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
         if os.name == 'nt':        
@@ -313,9 +372,9 @@ if __name__ == '__main__':
         logging.info(f'Using device {device}')
 
         if args.target_downscale==1:
-            model = UNetSmall(n_channels=3, n_classes=args.classes, bilinear=not args.convtrans)
+            model = UNetSmall(n_channels=3, n_classes=args.classes, max_chans=args.max_chans)
         elif args.target_downscale==4:
-            model = UNetSmallQuarter(n_channels=3, n_classes=args.classes, bilinear=not args.convtrans)
+            model = UNetSmallQuarter(n_channels=3, n_classes=args.classes, max_chans=args.max_chans)
         else:
             raise Exception(f'Invalid target_downscale: {args.target_downscale}')
 
@@ -324,7 +383,7 @@ if __name__ == '__main__':
         logging.info(f'Network:\n'
                     f'\t{model.n_channels} input channels\n'
                     f'\t{model.n_classes} output channels (classes)\n'
-                    f'\t{"Bilinear" if model.bilinear else "Transposed conv"} upscaling')
+                    f'\t{model.max_chans} max channels')
 
         if args.load:
             state_dict = torch.load(args.load, map_location=device)
