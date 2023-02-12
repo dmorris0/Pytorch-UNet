@@ -21,7 +21,6 @@ from plot_data import save_scores, plot_scores
 
 dirname = os.path.dirname(__file__)
 dataset_path = os.path.join( os.path.dirname(dirname), 'cvdemos', 'image')
-
 sys.path.append(dataset_path)
 from image_dataset import ImageData
 from synth_data import DrawData
