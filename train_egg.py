@@ -52,7 +52,7 @@ def train_model(
         train_set = ImageData(os.path.join(args.data_dir, args.data_train),'train',     
                               radius=args.dilate, target_downscale=args.target_downscale, rand_flip=True)
         val_set   = ImageData(os.path.join(args.data_dir, args.data_validation),'validation',
-                              radius=args.dilate, target_downscale=args.target_downscale)
+                              radius=args.dilate, target_downscale=args.target_downscale, rand_flip=False)
         n_train, n_val = len(train_set), len(val_set)
         data_pos_weight = train_set.pos_weight
 
@@ -220,7 +220,7 @@ def train_model(
         etscores.append( np.array([global_step, totscores[1]/totscores[0], *totscores[2:]]))
         save_scores(os.path.join(run_dir,"train_scores.csv"), etscores)
         save_scores(os.path.join(run_dir,"val_scores.csv"), bscores)
-        plot_scores(etscores, bscores, os.path.join(run_dir,"scores.png"))
+        plot_scores(etscores, bscores, args.run, os.path.join(run_dir,"scores.png"))
 
 
         if args.save_checkpoint:
@@ -280,7 +280,7 @@ class Args():
 
 if __name__ == '__main__':
 
-    runlist = [10]
+    runlist = [16]
     for run in runlist:
         if run==1:
             args = Args(run, epochs = 1,
@@ -328,6 +328,7 @@ if __name__ == '__main__':
                         target_downscale=4)
         elif run==7:
             # same as 2, but gamma of 3
+            # Best so far from 6 - 10
             args = Args(run, epochs = 120,
                         data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
                         focal_loss_ag=(0.9,3.0),                          
@@ -336,7 +337,7 @@ if __name__ == '__main__':
                         target_downscale=4,
                         max_chans=64)
         elif run==8:
-            # same as 2, but gamma of 3
+            # same as 2, but gamma of 4
             args = Args(run, epochs = 100,
                         data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
                         focal_loss_ag=(0.9,4.0),                          
@@ -362,6 +363,60 @@ if __name__ == '__main__':
                         dilate=0.,  
                         target_downscale=4,
                         max_chans=128)
+        elif run==11:
+            # same as 7, with gamma of 3, but updated training data and validation
+            args = Args(run, epochs = 100,
+                        data_train='Eggs_train_23-02-12.h5', data_validation='Eggs_validation_23-02-12.h5', 
+                        focal_loss_ag=(0.9,3.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=64)
+        elif run==12:
+            # same as 11, with gamma of 3, but training data excludes small dataset (our extra self-placed eggs)
+            args = Args(run, epochs = 100,
+                        data_train='Eggs_train_no_small_23-02-12.h5', data_validation='Eggs_validation_23-02-12.h5', 
+                        focal_loss_ag=(0.9,3.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=64)
+        elif run==13:
+            # Repeat of 7, with latest data and tiles in validation
+            args = Args(run, epochs = 120,
+                        data_train='Eggs_train_23-02-15.h5', data_validation='Eggs_validation_tile_23-02-15.h5', 
+                        focal_loss_ag=(0.9,3.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=64)
+        elif run==14:
+            # Repeat of 7, with latest data and full images in validation
+            args = Args(run, epochs = 120,
+                        data_train='Eggs_train_23-02-15.h5', data_validation='Eggs_validation_large_23-02-15.h5', 
+                        focal_loss_ag=(0.9,3.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=64)
+        elif run==15:
+            # Run 13, but no small dataset in training
+            args = Args(run, epochs = 120,
+                        data_train='Eggs_train_no_small_23-02-15.h5', data_validation='Eggs_validation_tile_23-02-15.h5', 
+                        focal_loss_ag=(0.9,3.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=64)
+        elif run==16:
+            # Repeat 13 but 96 channels
+            args = Args(run, epochs = 120,
+                        data_train='Eggs_train_23-02-15.h5', data_validation='Eggs_validation_tile_23-02-15.h5', 
+                        focal_loss_ag=(0.9,3.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=96)
             
         print(80*"=")
         logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
