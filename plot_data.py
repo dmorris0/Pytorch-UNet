@@ -32,7 +32,7 @@ def get_measures(scores):
     recall = scores[:,0]/ (scores[:,0]+scores[:,2]+1e-3)
     return dice, precision, recall
 
-def plot_scores(train_scores, val_scores, run, filename=None):
+def plot_scores(train_scores, val_scores, run, filename=None, comment=''):
     fig = plt.figure(num='Scores', figsize=(10,12))
     fig.clf()
     ax = fig.add_subplot(3,1,1)
@@ -61,6 +61,8 @@ def plot_scores(train_scores, val_scores, run, filename=None):
     ax.set_ylim( 0, 1)
     ax.grid()
     ax.legend()
+    if comment:
+        plt.suptitle(comment)
     plt.show(block=False)
     if not filename is None:
         plt.savefig(filename)

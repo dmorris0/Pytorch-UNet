@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 import numpy as np
 import platform
+import json
 
 import wandb
 from evaluate_bce import evaluate_bce
@@ -78,6 +79,8 @@ def train_model(
     with open(os.path.join(run_dir,'wandb-run-info.txt'),'w') as f:
         print(f'{wandb.run.name}',file=f)
         print(f'{wandb.run.get_url()}',file=f)
+    with open(os.path.join(run_dir, 'args.json'),'w') as f:
+        json.dump(vars(args), f, indent=4)    # Use vars() to convert it to a dict
 
     logging.info(f'''Starting training:
         Run:              {args.run}
@@ -216,10 +219,13 @@ def train_model(
         except:
             pass
 
-        etscores.append( np.array([global_step, totscores[1]/totscores[0], *totscores[2:]]))
-        save_scores(os.path.join(run_dir,"train_scores.csv"), etscores)
-        save_scores(os.path.join(run_dir,"val_scores.csv"), bscores)
-        plot_scores(etscores, bscores, args.run, os.path.join(run_dir,"scores.png"))
+        etscores.append(
+            np.array([global_step, totscores[1]/totscores[0], *totscores[2:]]))
+        save_scores(os.path.join(run_dir, "train_scores.csv"), etscores)
+        save_scores(os.path.join(run_dir, "val_scores.csv"), bscores)
+        plot_scores(etscores, bscores, args.run, 
+                    filename = os.path.join(run_dir,f"scores_{args.run:03d}.png"),
+                    comment = args.comment)
 
 
         if args.save_checkpoint:
@@ -252,6 +258,7 @@ class Args():
                  gradient_clipping: float = 1.0,
                  num_workers: int = None,
                  max_chans: int = 64,
+                 comment: str = '',
                  ):
         self.run = run
         self.data_dir = data_dir
@@ -275,11 +282,12 @@ class Args():
         self.gradient_clipping = gradient_clipping
         self.num_workers = num_workers
         self.max_chans = max_chans
+        self.comment = comment
 
 
 if __name__ == '__main__':
 
-    runlist = [16]
+    runlist = [22]
     for run in runlist:
         if run==1:
             args = Args(run, epochs = 1,
@@ -400,6 +408,9 @@ if __name__ == '__main__':
                         max_chans=64)
         elif run==15:
             # Run 13, but no small dataset in training
+            # Surprisingly this does better than with the small dataset.  
+            # I will stop using the small dataset
+            # This is good -- best solution for 64 channels
             args = Args(run, epochs = 120,
                         data_train='Eggs_train_no_small_23-02-15.h5', data_validation='Eggs_validation_tile_23-02-15.h5', 
                         focal_loss_ag=(0.9,3.0),                          
@@ -409,6 +420,8 @@ if __name__ == '__main__':
                         max_chans=64)
         elif run==16:
             # Repeat 13 but 96 channels
+            # suprisingly worse!  I will change the maxchannels to apply only on the UNet portion
+            # not on the pre-downsampling portion, see run 17
             args = Args(run, epochs = 120,
                         data_train='Eggs_train_23-02-15.h5', data_validation='Eggs_validation_tile_23-02-15.h5', 
                         focal_loss_ag=(0.9,3.0),                          
@@ -416,7 +429,69 @@ if __name__ == '__main__':
                         dilate=0.,  
                         target_downscale=4,
                         max_chans=96)
-            
+        elif run==17:
+            # Compare to 16, where now I changed the maxchannels to apply only on the UNet portion
+            # not on the pre-downsampling portion, see run 17
+            # Also, excludes the small dataset, which should make a small improvement, see run 15
+            args = Args(run, epochs = 80,
+                        data_train='Eggs_train_no_small_23-02-15.h5', data_validation='Eggs_validation_tile_23-02-15.h5', 
+                        focal_loss_ag=(0.9,3.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=96)
+        elif run==18:
+            args = Args(run, epochs = 80,
+                        comment = 'Like 17 (96 channels) but adjust focal loss to improve precision',
+                        data_train='Eggs_train_no_small_23-02-15.h5', data_validation='Eggs_validation_tile_23-02-15.h5', 
+                        focal_loss_ag=(0.8,3.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=96)
+        elif run==19:
+            # This is pretty good for 96 channels
+            args = Args(run, epochs = 100,
+                        comment = 'Like 17, 18 (96 channels) but adjust focal loss to improve precision',
+                        data_train='Eggs_train_no_small_23-02-15.h5', data_validation='Eggs_validation_tile_23-02-15.h5', 
+                        focal_loss_ag=(0.85,3.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=96)
+        elif run==20:
+            args = Args(run, epochs = 100,
+                        comment = 'Similar to 19, but gamma 4',
+                        data_train='Eggs_train_no_small_23-02-15.h5', data_validation='Eggs_validation_tile_23-02-15.h5', 
+                        focal_loss_ag=(0.85,4.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=96)
+        elif run==21:
+            # Building on run 15, but with 23-02-16 dataset now adds empty images in training
+            args = Args(run, epochs = 120,
+                        comment='Building on run 15, but with 23-02-16 dataset now adds empty images in training',
+                        data_train='Eggs_train_23-02-16.h5', data_validation='Eggs_validation_tile_23-02-16.h5', 
+                        focal_loss_ag=(0.9,3.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=64)
+        elif run==22:
+            # Building on run 20, but with 23-02-16 dataset now adds empty images in training
+            args = Args(run, epochs = 100,
+                        comment = 'Building on run 20, but with 23-02-16 dataset now adds empty images in training',
+                        data_train='Eggs_train_23-02-16.h5', data_validation='Eggs_validation_tile_23-02-16.h5', 
+                        focal_loss_ag=(0.85,4.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=96)
+
+
+
+
         print(80*"=")
         logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
         if os.name == 'nt':        
