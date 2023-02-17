@@ -193,8 +193,8 @@ def train_model(
                     model, val_loader, device, criterion, params.amp, 
                     params.target_downscale, params.max_distance, global_step,
                     os.path.join(run_dir,'val',f'step_{val_step:03d}.h5') )
-        if val_step>0 and (val_step-1)%10:
-            os.remove(os.path.join(run_dir,'val',f'step_{val_step:03d}.h5'))  # delete previous file since pretty big
+        if val_step>0:
+            os.remove(os.path.join(run_dir,'val',f'step_{val_step-1:03d}.h5'))  # delete previous file since pretty big
         bscores.append( np.concatenate( ((global_step,val_loss,),scores) ) )
         val_step += 1
         scheduler.step(val_dice)
@@ -238,6 +238,7 @@ class Params():
                  data_dir: str = '',
                  data_train: str = 'Eggs_train.h5',
                  data_validation: str = 'Eggs_validation.h5',
+                 data_test: str = '',
                  output_dir: str = 'out_eggs',
                  epochs: int = 10,
                  batch_size: int = 4,
@@ -262,6 +263,7 @@ class Params():
         self.data_dir = data_dir
         self.data_train = data_train
         self.data_validation = data_validation
+        self.data_test = data_test
         self.output_dir = output_dir
         self.epochs = epochs
         self.batch_size = batch_size
@@ -480,6 +482,7 @@ def get_run_params(run):
             params = Params(run, epochs = 120,
                         comment='Building on run 15, but with 23-02-16 dataset now adds empty images in training',
                         data_train='Eggs_train_23-02-16.h5', data_validation='Eggs_validation_tile_23-02-16.h5', 
+                        data_test='Eggs_validation_large_23-02-16.h5',
                         focal_loss_ag=(0.9,3.0),                          
                         batch_size=4,
                         dilate=0.,  
@@ -489,7 +492,9 @@ def get_run_params(run):
             # Building on run 20, but with 23-02-16 dataset now adds empty images in training
             params = Params(run, epochs = 100,
                         comment = 'Building on run 20, but with 23-02-16 dataset now adds empty images in training',
-                        data_train='Eggs_train_23-02-16.h5', data_validation='Eggs_validation_tile_23-02-16.h5', 
+                        data_train='Eggs_train_23-02-16.h5', 
+                        data_validation='Eggs_validation_tile_23-02-16.h5', 
+                        data_test='Eggs_validation_large_23-02-16.h5',
                         focal_loss_ag=(0.85,4.0),                          
                         batch_size=4,
                         dilate=0.,  

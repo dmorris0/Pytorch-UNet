@@ -11,9 +11,12 @@ sys.path.append('../cvdemos/image')
 from synth_data import DrawData
 
 def save_scores(filename, scores):
-    with open(filename, 'w', newline='') as f:        
-        for row in scores:
-            print(','.join(map(str, row)), file=f)
+    with open(filename, 'w', newline='') as f:     
+        if scores.ndim==1:
+            print(','.join(map(str, scores)), file=f)
+        else:   
+            for row in scores:
+                print(','.join(map(str, row)), file=f)
 
 def read_scores(filename):
     #scores = []
@@ -72,6 +75,8 @@ if __name__=="__main__":
 
     parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
     parser.add_argument('run', type=int,  help='Run number')
+    parser.add_argument('--test', action='store_true', help="Plot test run")
+
 
     args = parser.parse_args()
 
@@ -92,11 +97,14 @@ if __name__=="__main__":
     tscores = read_scores(os.path.join(run_dir,"train_scores.csv"))
     vscores = read_scores(os.path.join(run_dir,"val_scores.csv"))
 
-    outpng = os.path.join(run_dir,"scores.png") if overwrite_png else None
+    outpng = os.path.join(run_dir,f"scores_{args.run:03d}.png") if overwrite_png else None
 
     plot_scores(tscores, vscores, args.run, outpng)    
 
-    files = [str(x) for x in list(Path(os.path.join(run_dir,'val')).glob('*.h5'))]
+    if args.test:
+        files = [str(x) for x in list(Path(os.path.join(run_dir,'test')).glob('*.h5'))]
+    else:
+        files = [str(x) for x in list(Path(os.path.join(run_dir,'val')).glob('*.h5'))]
     files.sort()
     filename = files[-1]
 

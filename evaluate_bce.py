@@ -62,7 +62,7 @@ class SaveResults:
 
     def write_annotations(self):
         with open(self.json_filename,'w') as f:
-            json.dump(self.data_annotations, f)
+            json.dump(self.data_annotations, f, indent=2)
 
     def __del__(self):
         ''' Close the file when delete the class '''
