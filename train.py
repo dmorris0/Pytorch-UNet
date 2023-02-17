@@ -145,7 +145,7 @@ def train_model(
                     if model.n_classes == 1:
                         loss = criterion(masks_pred, true_masks)
                         detections = peaks.peak_coords( masks_pred.detach(), min_val=0.)                        
-                        iscores = matches.calc_match_scores( detections, centers.detach()/params.target_downscale, ncen.detach() )
+                        iscores,_,_ = matches.calc_match_scores( detections, centers.detach()/params.target_downscale, ncen.detach() )
                         #tscores.append( np.concatenate( ((global_step,loss.item(),),iscores.sum(axis=0)) ) )
                         totscores += np.concatenate( ((1,loss.item(),),iscores.sum(axis=0)) )
 

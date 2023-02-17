@@ -97,7 +97,7 @@ def evaluate_bce(net, dataloader, device, criterion, amp, target_downscale, max_
             mask_pred = net(image)
 
             detections = peaks.peak_coords( mask_pred, min_val=0.)
-            bscores = matches.calc_match_scores( up_scale_coords( detections, target_downscale ), centers, ncen )
+            bscores,_,_ = matches.calc_match_scores( up_scale_coords( detections, target_downscale ), centers, ncen )
 
             if save is None:
                 save = SaveResults(h5filename=h5filename, batch=batch, Nb=Nb, step=step)
