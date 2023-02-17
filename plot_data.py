@@ -102,12 +102,23 @@ if __name__=="__main__":
     plot_scores(tscores, vscores, args.run, outpng)    
 
     if args.test:
+        test_scores = read_scores(os.path.join(run_dir,"test_scores.csv"))
+        scores = test_scores[0,2:].round().astype(int)
+        dice = 2*scores[0] / (scores[0]+scores.sum()+1e-3)
+        precision = scores[0]/ (scores[0]+scores[1]+1e-3)
+        recall = scores[0]/ (scores[0]+scores[2]+1e-3)
+        print('='*80)
+        print(f'TP: {scores[0]}, FP: {scores[1]}, FN: {scores[2]}    ====    ',end='')
+        print(f'Dice: {dice:.3}, Precision: {precision:.3}, Recall: {recall:.3}')
+        print('='*80)
+
+    if args.test:
         files = [str(x) for x in list(Path(os.path.join(run_dir,'test')).glob('*.h5'))]
     else:
         files = [str(x) for x in list(Path(os.path.join(run_dir,'val')).glob('*.h5'))]
     files.sort()
     filename = files[-1]
 
-    dd = DrawData(filename)
+    dd = DrawData(filename, recalc_scores=True)
     dd.plot()
     
