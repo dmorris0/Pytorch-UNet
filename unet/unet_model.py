@@ -48,22 +48,21 @@ class UNet(nn.Module):
         self.outc = torch.utils.checkpoint(self.outc)
 
 class UNetSmall(nn.Module):
-    def __init__(self, n_channels, n_classes, bilinear=False):
+    def __init__(self, n_channels, n_classes, max_chans=64):
         super(UNetSmall, self).__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
-        self.bilinear = bilinear
+        self.max_chans = max_chans
 
         self.inc = (DoubleConv(n_channels, 64))
-        self.down1 = (Down(64, 64))
-        self.down2 = (Down(64, 64))
-        self.down3 = (Down(64, 64))
-        factor = 2 if bilinear else 1
-        self.down4 = (Down(64, 128 // factor))
-        self.up1 = (Up(128, 128 // factor, bilinear))
-        self.up2 = (Up(128, 128 // factor, bilinear))
-        self.up3 = (Up(128, 128 // factor, bilinear))
-        self.up4 = (Up(128, 64, bilinear))
+        self.down1 = (Down(64, max_chans))
+        self.down2 = (Down(max_chans, max_chans))
+        self.down3 = (Down(max_chans, max_chans))
+        self.down4 = (Down(max_chans, max_chans))
+        self.up1 = (Up(max_chans*2, max_chans, True))
+        self.up2 = (Up(max_chans*2, max_chans, True))
+        self.up3 = (Up(max_chans*2, max_chans, True))
+        self.up4 = (Up(64 + max_chans, 64, True))
         self.outc = (OutConv(64, n_classes))
 
     def forward(self, x):
