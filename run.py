@@ -88,10 +88,11 @@ if __name__ == '__main__':
         else:
             device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
+        n_channels = (params.n_previous_images + 1) * 3
         if params.target_downscale==1:
-            model = UNetSmall(n_channels=3, n_classes=params.classes, max_chans=params.max_chans)
+            model = UNetSmall(n_channels=n_channels, n_classes=params.classes, max_chans=params.max_chans)
         elif params.target_downscale==4:
-            model = UNetSmallQuarter(n_channels=3, n_classes=params.classes, max_chans=params.max_chans)
+            model = UNetSmallQuarter(n_channels=n_channels, n_classes=params.classes, max_chans=params.max_chans)
         else:
             raise Exception(f'Invalid target_downscale: {params.target_downscale}')
 
