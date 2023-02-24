@@ -513,6 +513,46 @@ def get_run_params(run):
                         dilate=0.,  
                         target_downscale=4,
                         max_chans=96)
+        elif run==24:
+            params = Params(run, epochs = 100,
+                        comment = '5 previous images, Post-merge',
+                        data_train='Eggs_train_23-02-18.h5', 
+                        data_validation='Eggs_validation_tile_23-02-18.h5', 
+                        data_test='Eggs_validation_large_23-02-18.h5',
+                        n_previous_images=5,
+                        post_merge = True,
+                        focal_loss_ag=(0.85,4.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=96)
+        elif run==25:
+            params = Params(run, epochs = 100,
+                        comment = '5 previous images, Pre-merge',
+                        data_train='Eggs_train_23-02-18.h5', 
+                        data_validation='Eggs_validation_tile_23-02-18.h5', 
+                        data_test='Eggs_validation_large_23-02-18.h5',
+                        n_previous_images=5,
+                        pre_merge = True,
+                        focal_loss_ag=(0.85,4.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=96)
+        elif run==26:
+            params = Params(run, epochs = 100,
+                        comment = '5 previous images, Pre-merge and Post-merge',
+                        data_train='Eggs_train_23-02-18.h5', 
+                        data_validation='Eggs_validation_tile_23-02-18.h5', 
+                        data_test='Eggs_validation_large_23-02-18.h5',
+                        n_previous_images=5,
+                        pre_merge = True,
+                        post_merge = True,
+                        focal_loss_ag=(0.85,4.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=96)
             
         else:
             raise Exception(f'Undefined run: {run}')
@@ -541,7 +581,7 @@ if __name__ == '__main__':
             model = UNetSmall(n_channels=n_channels, n_classes=params.classes, max_chans=params.max_chans)
         elif params.target_downscale==4:
             #model = UNetSmallQuarter(n_channels=3, n_classes=params.classes, max_chans=params.max_chans)
-            model = UNetBlocks(n_channels=3, n_classes=params.classes, max_chans=params.max_chans
+            model = UNetBlocks(n_channels=3, n_classes=params.classes, max_chans=params.max_chans,
                                pre_merge = params.pre_merge, post_merge = params.post_merge)            
         else:
             raise Exception(f'Invalid target_downscale: {params.target_downscale}')
