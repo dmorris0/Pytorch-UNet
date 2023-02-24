@@ -49,7 +49,7 @@ def run_model(
     loader_args = dict(batch_size=1, num_workers=num_workers, pin_memory=True)
     test_loader = DataLoader(test_set, shuffle=False, drop_last=False, **loader_args)
 
-    run_dir = os.path.join(os.path.dirname(__file__), params.output_dir, f'{run:03d}')
+    run_dir = os.path.join(os.path.dirname(__file__), params.output_dir, f'{params.run:03d}')
     os.makedirs(os.path.join(run_dir,'test'), exist_ok=True)
     outname = os.path.join(run_dir,'test',f'output.h5')
 
