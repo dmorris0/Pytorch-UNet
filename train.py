@@ -45,16 +45,19 @@ def train_model(
     # 1. Create dataset
     if params.data_validation is None:
         dataset = ImageData(os.path.join(params.data_dir, params.data_train),'train', 
-                            radius=params.dilate, target_downscale=params.target_downscale, rand_flip=True)
+                            radius=params.dilate, target_downscale=params.target_downscale, 
+                            rand_flip=True, n_previous_images = params.n_previous_images)
         data_pos_weight = dataset.pos_weight
         n_val = int(len(dataset) * 0.12)
         n_train = len(dataset) - n_val
         train_set, val_set = random_split(dataset, [n_train, n_val], generator=torch.Generator().manual_seed(0))
     else:
         train_set = ImageData(os.path.join(params.data_dir, params.data_train),'train',     
-                              radius=params.dilate, target_downscale=params.target_downscale, rand_flip=True)
+                              radius=params.dilate, target_downscale=params.target_downscale, 
+                            rand_flip=True, n_previous_images = params.n_previous_images)
         val_set   = ImageData(os.path.join(params.data_dir, params.data_validation),'validation',
-                              radius=params.dilate, target_downscale=params.target_downscale, rand_flip=False)
+                              radius=params.dilate, target_downscale=params.target_downscale, 
+                            rand_flip=False, n_previous_images = params.n_previous_images)
         n_train, n_val = len(train_set), len(val_set)
         data_pos_weight = train_set.pos_weight
 
@@ -110,8 +113,7 @@ def train_model(
 
     # Find positive weights for single-pixel positives:
     pos_weight = torch.Tensor([data_pos_weight/params.target_downscale**2]).to(device)
-    print('Pos Weight:', pos_weight[0].item())
-    criterion = get_criterion(params, pos_weight)
+    criterion = get_criterion(params, pos_weight)  # pos_weight is only used if not doing focal loss
 
     global_step = 0
     val_step = 0
@@ -231,6 +233,7 @@ class Params():
                  data_validation: str = 'Eggs_validation.h5',
                  data_test: str = '',
                  output_dir: str = 'out_eggs',
+                 n_previous_images: int = 0,
                  epochs: int = 10,
                  batch_size: int = 4,
                  lr: float = 1e-6,
@@ -258,6 +261,7 @@ class Params():
         self.data_validation = data_validation
         self.data_test = data_test
         self.output_dir = output_dir
+        self.n_previous_images = n_previous_images
         self.epochs = epochs
         self.batch_size = batch_size
         self.lr = lr
@@ -485,6 +489,8 @@ def get_run_params(run):
                         max_chans=64)
         elif run==22:
             # Building on run 20, but with 23-02-16 dataset now adds empty images in training
+            # Runs 22 and 21 are similar on tile validations, but 22 is better on full image validation
+            # I need to see if this is because of focal loss or because of max_chans ...
             params = Params(run, epochs = 100,
                         comment = 'Building on run 20, but with 23-02-16 dataset now adds empty images in training',
                         data_train='Eggs_train_23-02-16.h5', 
@@ -495,6 +501,19 @@ def get_run_params(run):
                         dilate=0.,  
                         target_downscale=4,
                         max_chans=96)
+        elif run==23:
+            params = Params(run, epochs = 100,
+                        comment = 'Same as 22 but with 5 previous images',
+                        data_train='Eggs_train_23-02-18.h5', 
+                        data_validation='Eggs_validation_tile_23-02-18.h5', 
+                        data_test='Eggs_validation_large_23-02-18.h5',
+                        n_previous_images=5,
+                        focal_loss_ag=(0.85,4.0),                          
+                        batch_size=4,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=96)
+            
         else:
             raise Exception(f'Undefined run: {run}')
         return params
@@ -517,8 +536,9 @@ if __name__ == '__main__':
             device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         logging.info(f'Using device {device}')
 
+        n_channels = (params.n_previous_images + 1) * 3
         if params.target_downscale==1:
-            model = UNetSmall(n_channels=3, n_classes=params.classes, max_chans=params.max_chans)
+            model = UNetSmall(n_channels=n_channels, n_classes=params.classes, max_chans=params.max_chans)
         elif params.target_downscale==4:
             #model = UNetSmallQuarter(n_channels=3, n_classes=params.classes, max_chans=params.max_chans)
             model = UNetBlocks(n_channels=3, n_classes=params.classes, max_chans=params.max_chans

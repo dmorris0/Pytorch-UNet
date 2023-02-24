@@ -11,6 +11,7 @@ sys.path.append('../cvdemos/image')
 from synth_data import DrawData
 
 def save_scores(filename, scores):
+    scores = np.array(scores) if isinstance(scores,list) else scores
     with open(filename, 'w', newline='') as f:     
         if scores.ndim==1:
             print(','.join(map(str, scores)), file=f)
