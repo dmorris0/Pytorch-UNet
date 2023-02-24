@@ -143,7 +143,7 @@ class UNetSmallQuarter(nn.Module):
 class UNetBlocks(nn.Module):
     def __init__(self, n_channels, n_classes, 
                  max_chans=64, pre_merge = False, post_merge = False):
-        super(UNetSmallQuarter, self).__init__()
+        super(UNetBlocks, self).__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.max_chans = max_chans
