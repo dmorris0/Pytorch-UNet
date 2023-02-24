@@ -94,7 +94,7 @@ def evaluate_bce(net, dataloader, device, criterion, amp, target_downscale, max_
             mask_true = mask_true.to(device=device, dtype=float)
 
             # predict the mask
-            mask_pred = net(image)
+            mask_pred = net.apply_to_stack(image)
 
             detections = peaks.peak_coords( mask_pred, min_val=0.)
             bscores,_,_ = matches.calc_match_scores( up_scale_coords( detections, target_downscale ), centers, ncen )
