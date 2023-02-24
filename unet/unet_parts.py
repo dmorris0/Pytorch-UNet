@@ -87,3 +87,15 @@ class OutConv(nn.Module):
 
     def forward(self, x):
         return self.conv(x)
+
+class Merge(nn.Module):
+    def __init__(self, n_channels):
+        super().__init__()
+        self.conv = nn.Conv2d( 2*n_channels, n_channels, kernel_size=1 )
+    
+    def forward(self, x1, x2=None):
+        if x2 is None:
+            x2 = torch.zeros_like(x1)
+        x = torch.cat([x2, x1], dim=1)
+        return self.conv(x)
+        
