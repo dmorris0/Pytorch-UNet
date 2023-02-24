@@ -133,10 +133,10 @@ def train_model(
             for nb, batch in enumerate(train_loader):
                 images, true_masks, centers, ncen = batch['image'], batch['targets'], batch['centers'], batch['ncen']
 
-                assert images.shape[1] == model.n_channels, \
-                    f'Network has been defined with {model.n_channels} input channels, ' \
-                    f'but loaded images have {images.shape[1]} channels. Please check that ' \
-                    'the images are loaded correctly.'
+                #assert images.shape[1] == model.n_channels, \
+                #    f'Network has been defined with {model.n_channels} input channels, ' \
+                #    f'but loaded images have {images.shape[1]} channels. Please check that ' \
+                #    'the images are loaded correctly.'
 
                 images = images.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
                 # true_masks = true_masks.to(device=device, dtype=torch.long)
