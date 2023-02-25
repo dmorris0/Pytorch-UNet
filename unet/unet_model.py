@@ -152,20 +152,20 @@ class UNetBlocks(nn.Module):
 
         self.inc = (DoubleConv(n_channels, 64))        
         self.down_pre1 = (DownAvg(64, 64))
-        self.down_pre2 = (DownAvg(64, 64))
+        self.down_pre2 = (DownAvg(64, max_chans))
         if self.pre_merge:
-            self.merge_input = Merge(64)
-        self.down1 = (Down(64, max_chans))
+            self.merge_input = Merge(max_chans)
+        self.down1 = (Down(max_chans, max_chans))
         self.down2 = (Down(max_chans, max_chans))
         self.down3 = (Down(max_chans, max_chans))
         self.down4 = (Down(max_chans, max_chans))
         self.up1 = (Up(max_chans*2, max_chans, True))
         self.up2 = (Up(max_chans*2, max_chans, True))
         self.up3 = (Up(max_chans*2, max_chans, True))
-        self.up4 = (Up(64 + max_chans, 64, True))
+        self.up4 = (Up(max_chans*2, max_chans, True))
         if self.post_merge:
-            self.merge_output = Merge(64)        
-        self.outc = (OutConv(64, n_classes))
+            self.merge_output = Merge(max_chans)        
+        self.outc = (OutConv(max_chans, n_classes))
 
     def forward(self, xlist):
         x = self.inc(xlist[0])

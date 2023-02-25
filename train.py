@@ -15,17 +15,18 @@ import numpy as np
 import platform
 import json
 import argparse
+import shutil
 
 import wandb
 from evaluate_bce import evaluate_bce
 from unet import UNet, UNetSmall, UNetSmallQuarter,  UNetBlocks
 from plot_data import save_scores, plot_scores
+from run_params import get_run_params, get_run_dirs, find_last_checkpoints
 
 dirname = os.path.dirname(__file__)
 dataset_path = os.path.join( os.path.dirname(dirname), 'cvdemos', 'image')
 sys.path.append(dataset_path)
 from image_dataset import ImageData
-from synth_data import DrawData
 from heatmap_score import Peaks, MatchScore
 
 
@@ -68,11 +69,12 @@ def train_model(
     train_loader = DataLoader(train_set, shuffle=True, **loader_args)
     val_loader = DataLoader(val_set, shuffle=False, drop_last=True, **loader_args)
 
-    run_dir = os.path.join(os.path.dirname(__file__), params.output_dir, f'{run:03d}')
-    os.makedirs( os.path.join(run_dir,'val'), exist_ok=True)
-    os.makedirs( os.path.join(run_dir,'train'), exist_ok=True)
-    dir_checkpoint = Path(os.path.join(run_dir,'checkpoints'))
+    dir_run, dir_checkpoint = get_run_dirs(params.output_dir, params.run)
     Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
+    os.makedirs( os.path.join(dir_run,'val'), exist_ok=True)
+    os.makedirs( os.path.join(dir_run,'train'), exist_ok=True)
+    dir_plot = os.path.join(params.output_dir,'Plots')
+    os.makedirs( dir_plot, exist_ok=True)
 
     # (Initialize logging)
     experiment = wandb.init(project='U-Net', resume='allow', anonymous='must')
@@ -81,10 +83,10 @@ def train_model(
         dict(epochs=params.epochs, batch_size=params.batch_size, learning_rate=params.lr,
              save_checkpoint=params.save_checkpoint, img_scale=params.scale, amp=params.amp)
     )
-    with open(os.path.join(run_dir,'wandb-run-info.txt'),'w') as f:
+    with open(os.path.join(dir_run,'wandb-run-info.txt'),'w') as f:
         print(f'{wandb.run.name}',file=f)
         print(f'{wandb.run.get_url()}',file=f)
-    with open(os.path.join(run_dir, 'params.json'),'w') as f:
+    with open(os.path.join(dir_run, 'params.json'),'w') as f:
         json.dump(vars(params), f, indent=4)    # Use vars() to convert it to a dict
 
     logging.info(f'''Starting training:
@@ -120,9 +122,10 @@ def train_model(
 
     peaks = Peaks(1, device)
     matches = MatchScore(max_distance = params.max_distance/params.target_downscale)
-    #tscores = []
     etscores = []
     bscores = []
+    best_val_dice = 0
+    best_epoch = 0
 
     # 5. Begin training
     for epoch in range(1, params.epochs + 1):
@@ -133,21 +136,15 @@ def train_model(
             for nb, batch in enumerate(train_loader):
                 images, true_masks, centers, ncen = batch['image'], batch['targets'], batch['centers'], batch['ncen']
 
-                #assert images.shape[1] == model.n_channels, \
-                #    f'Network has been defined with {model.n_channels} input channels, ' \
-                #    f'but loaded images have {images.shape[1]} channels. Please check that ' \
-                #    'the images are loaded correctly.'
-
                 images = images.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
-                # true_masks = true_masks.to(device=device, dtype=torch.long)
                 true_masks = true_masks.to(device=device, dtype=float)  # BCE requires float
+                n_max = np.random.randint(params.n_previous_images+1) + 1 if params.n_previous_images and params.rand_previous else None
 
                 with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=params.amp):
-                    masks_pred = model.apply_to_stack(images)
+                    masks_pred = model.apply_to_stack(images, n_max)
                     loss = criterion(masks_pred, true_masks)
                     detections = peaks.peak_coords( masks_pred.detach(), min_val=0.)                        
                     iscores,_,_ = matches.calc_match_scores( detections, centers.detach()/params.target_downscale, ncen.detach() )
-                    #tscores.append( np.concatenate( ((global_step,loss.item(),),iscores.sum(axis=0)) ) )
                     totscores += np.concatenate( ((1,loss.item(),),iscores.sum(axis=0)) )
 
 
@@ -185,12 +182,15 @@ def train_model(
         val_loss, scores, val_dice, val_pr, val_re = evaluate_bce(
                     model, val_loader, device, criterion, params.amp, 
                     params.target_downscale, params.max_distance, global_step,
-                    os.path.join(run_dir,'val',f'step_{val_step:03d}.h5') )
+                    os.path.join(dir_run,'val',f'step_{val_step:03d}.h5') )
         if val_step>0:
-            os.remove(os.path.join(run_dir,'val',f'step_{val_step-1:03d}.h5'))  # delete previous file since pretty big
+            os.remove(os.path.join(dir_run,'val',f'step_{val_step-1:03d}.h5'))  # delete previous file since pretty big
         bscores.append( np.concatenate( ((global_step,val_loss,),scores) ) )
         val_step += 1
         scheduler.step(val_dice)
+        if val_dice > best_val_dice:
+            best_epoch = epoch
+            best_val_dice = val_dice
 
         logging.info(f'Validation Loss {val_loss:.3}, Dice {val_dice:.3f}, Pr {val_pr:.3f}, Re {val_re:.3f}')
         try:
@@ -198,6 +198,7 @@ def train_model(
                                 'learning rate': optimizer.param_groups[0]['lr'],
                                 'validation loss': val_loss,
                                 'validation dice': val_dice,
+                                'best_val_dice': best_val_dice,
                                 'images': wandb.Image(images[0].cpu()),
                                 'masks': {
                                     'true': wandb.Image(true_masks[0].float().cpu()),
@@ -205,374 +206,39 @@ def train_model(
                                 },
                                 'step': global_step,
                                 'epoch': epoch,
+                                'best_epoch': best_epoch,
                                 **histograms
                             })
         except:
             pass
+        
+        with open(os.path.join(dir_run, 'train', f'log_{epoch:03d}.json'),'w') as f:
+            json.dump({
+                'epoch': epoch,
+                'step': global_step, 
+                'lr': optimizer.param_groups[0]['lr'],
+                'val_dice': val_dice,
+                'best_val_dice': best_val_dice,
+                'best_epoch': best_epoch,
+                }, f, indent=4)    # Use vars() to convert it to a dict        
 
         etscores.append(
             np.array([global_step, totscores[1]/totscores[0], *totscores[2:]]))
-        save_scores(os.path.join(run_dir, "train_scores.csv"), etscores)
-        save_scores(os.path.join(run_dir, "val_scores.csv"), bscores)
+        save_scores(os.path.join(dir_run, "train_scores.csv"), etscores)
+        save_scores(os.path.join(dir_run, "val_scores.csv"), bscores)
+        filename = os.path.join(dir_run,f"scores_{params.run:03d}.png")
         plot_scores(etscores, bscores, params.run, 
-                    filename = os.path.join(run_dir,f"scores_{params.run:03d}.png"),
-                    comment = params.comment)
-
+                    filename = filename, comment = params.comment)
+        shutil.copy2(filename, dir_plot)
 
         if params.save_checkpoint:
             state_dict = model.state_dict()
             # state_dict['mask_values'] = dataset.mask_values
-            torch.save(state_dict, os.path.join(dir_checkpoint,f'checkpoint_epoch{epoch:03d}.pth'))
+            checkpoint_name = os.path.join(dir_checkpoint,f'checkpoint_epoch{epoch:03d}.pth')
+            torch.save(state_dict, checkpoint_name)
             # logging.info(f'Checkpoint {epoch} saved!')
-
-class Params():
-    def __init__(self,
-                 run: int,
-                 data_dir: str = '',
-                 data_train: str = 'Eggs_train.h5',
-                 data_validation: str = 'Eggs_validation.h5',
-                 data_test: str = '',
-                 output_dir: str = 'out_eggs',
-                 n_previous_images: int = 0,
-                 epochs: int = 10,
-                 batch_size: int = 4,
-                 lr: float = 1e-6,
-                 load: str = False,     # load model from a .pth file
-                 scale: float = 0.5,    # Downscaling factor of the images
-                 amp: bool = False,     # Use mixed precision
-                 classes: int = 1,      # Number of classes
-                 focal_loss_ag: tuple = (0.25, 2.0),  # None for no focal loss
-                 dilate: float = 0.,
-                 target_downscale: int = 4,  # Set to 4 to 1/4 size
-                 max_distance: int = 12,
-                 save_checkpoint: bool = True,
-                 weight_decay: float = 1e-8,
-                 momentum: float = 0.999,
-                 gradient_clipping: float = 1.0,
-                 num_workers: int = None,
-                 max_chans: int = 64,
-                 comment: str = '',
-                 pre_merge: bool = False,
-                 post_merge: bool = False,
-                 ):
-        self.run = run
-        self.data_dir = data_dir
-        self.data_train = data_train
-        self.data_validation = data_validation
-        self.data_test = data_test
-        self.output_dir = output_dir
-        self.n_previous_images = n_previous_images
-        self.epochs = epochs
-        self.batch_size = batch_size
-        self.lr = lr
-        self.load = load
-        self.scale = scale
-        self.amp = amp
-        self.classes = classes
-        self.focal_loss_ag = focal_loss_ag
-        self.dilate = dilate
-        self.target_downscale = target_downscale
-        self.max_distance = max_distance
-        self.save_checkpoint = save_checkpoint
-        self.weight_decay = weight_decay
-        self.momentum = momentum
-        self.gradient_clipping = gradient_clipping
-        self.num_workers = num_workers
-        self.max_chans = max_chans
-        self.comment = comment
-        self.pre_merge = pre_merge
-        self.post_merge = post_merge
-
-        if not self.data_dir:
-            if not os.name =="nt":
-                self.data_dir = '/mnt/home/dmorris/Data/eggs'
-            elif platform.node()=='DM-O':
-                self.data_dir = 'D:/Data/Eggs/data'
-            else:
-                raise Exception(f"Unknown platform: {platform.node()}")
-
-
-def get_run_params(run):
-        if run==0:
-            params = Params(run, epochs = 0,
-                        data_train='Eggs_train_small.h5', data_validation=None,
-                        )
-        elif run==1:
-            params = Params(run, epochs = 1,
-                        data_train='Eggs_train_small.h5', data_validation=None, 
-                        focal_loss_ag=None,      
-                        dilate=0.,  
-                        target_downscale=4,
-                        num_workers=0,
-                        max_chans=96)
-        elif run==2:
-            params = Params(run, epochs = 80,
-                        data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
-                        focal_loss_ag=(0.9,2.0),  
-                        dilate=0.,  
-                        target_downscale=4)
-        elif run==3:
-            params = Params(run, epochs = 1,
-                        data_train='Eggs_train_small.h5', data_validation=None, 
-                        focal_loss_ag=None,      
-                        dilate=0.,  
-                        target_downscale=4,
-                        num_workers=0,
-                        load=r"C:\Users\morri\Source\Repos\Pytorch-UNet\out_eggs\001\checkpoints\checkpoint_epoch010.pth")
-        elif run==4:
-            # Focal loss with alpha = 0.25 fails to detect eggs
-            params = Params(run, epochs = 100,
-                        data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
-                        focal_loss_ag=(0.25,2.0),  
-                        dilate=0.,  
-                        target_downscale=4)
-        elif run==5:
-            # Alpha 0.99
-            params = Params(run, epochs = 100,
-                        data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
-                        focal_loss_ag=(0.99,2.0),                          
-                        dilate=0.,  
-                        target_downscale=4)
-        elif run==6:
-            # Batch size: 8
-            params = Params(run, epochs = 120,
-                        data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
-                        focal_loss_ag=(0.9,2.0),                          
-                        batch_size=8,
-                        dilate=0.,  
-                        target_downscale=4)
-        elif run==7:
-            # same as 2, but gamma of 3
-            # Best so far from 6 - 10
-            params = Params(run, epochs = 120,
-                        data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
-                        focal_loss_ag=(0.9,3.0),                          
-                        batch_size=4,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=64)
-        elif run==8:
-            # same as 2, but gamma of 4
-            params = Params(run, epochs = 100,
-                        data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
-                        focal_loss_ag=(0.9,4.0),                          
-                        batch_size=4,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=64)
-        elif run==9:
-            # same as 2, except max_chans = 128
-            params = Params(run, epochs = 120,
-                        data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
-                        focal_loss_ag=(0.9,2.0),                          
-                        batch_size=4,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=128)
-        elif run==10:
-            # same as 2, except max_chans = 128
-            params = Params(run, epochs = 100,
-                        data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
-                        focal_loss_ag=(0.9,3.0),                          
-                        batch_size=4,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=128)
-        elif run==11:
-            # same as 7, with gamma of 3, but updated training data and validation
-            params = Params(run, epochs = 100,
-                        data_train='Eggs_train_23-02-12.h5', data_validation='Eggs_validation_23-02-12.h5', 
-                        focal_loss_ag=(0.9,3.0),                          
-                        batch_size=4,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=64)
-        elif run==12:
-            # same as 11, with gamma of 3, but training data excludes small dataset (our extra self-placed eggs)
-            params = Params(run, epochs = 100,
-                        data_train='Eggs_train_no_small_23-02-12.h5', data_validation='Eggs_validation_23-02-12.h5', 
-                        focal_loss_ag=(0.9,3.0),                          
-                        batch_size=4,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=64)
-        elif run==13:
-            # Repeat of 7, with latest data and tiles in validation
-            params = Params(run, epochs = 120,
-                        data_train='Eggs_train_23-02-15.h5', data_validation='Eggs_validation_tile_23-02-15.h5', 
-                        focal_loss_ag=(0.9,3.0),                          
-                        batch_size=4,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=64)
-        elif run==14:
-            # Repeat of 7, with latest data and full images in validation
-            params = Params(run, epochs = 120,
-                        data_train='Eggs_train_23-02-15.h5', data_validation='Eggs_validation_large_23-02-15.h5', 
-                        focal_loss_ag=(0.9,3.0),                          
-                        batch_size=4,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=64)
-        elif run==15:
-            # Run 13, but no small dataset in training
-            # Surprisingly this does better than with the small dataset.  
-            # I will stop using the small dataset
-            # This is good -- best solution for 64 channels
-            params = Params(run, epochs = 120,
-                        data_train='Eggs_train_no_small_23-02-15.h5', data_validation='Eggs_validation_tile_23-02-15.h5', 
-                        focal_loss_ag=(0.9,3.0),                          
-                        batch_size=4,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=64)
-        elif run==16:
-            # Repeat 13 but 96 channels
-            # suprisingly worse!  I will change the maxchannels to apply only on the UNet portion
-            # not on the pre-downsampling portion, see run 17
-            params = Params(run, epochs = 120,
-                        data_train='Eggs_train_23-02-15.h5', data_validation='Eggs_validation_tile_23-02-15.h5', 
-                        focal_loss_ag=(0.9,3.0),                          
-                        batch_size=4,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=96)
-        elif run==17:
-            # Compare to 16, where now I changed the maxchannels to apply only on the UNet portion
-            # not on the pre-downsampling portion, see run 17
-            # Also, excludes the small dataset, which should make a small improvement, see run 15
-            params = Params(run, epochs = 80,
-                        data_train='Eggs_train_no_small_23-02-15.h5', data_validation='Eggs_validation_tile_23-02-15.h5', 
-                        focal_loss_ag=(0.9,3.0),                          
-                        batch_size=4,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=96)
-        elif run==18:
-            params = Params(run, epochs = 80,
-                        comment = 'Like 17 (96 channels) but adjust focal loss to improve precision',
-                        data_train='Eggs_train_no_small_23-02-15.h5', data_validation='Eggs_validation_tile_23-02-15.h5', 
-                        focal_loss_ag=(0.8,3.0),                          
-                        batch_size=4,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=96)
-        elif run==19:
-            # This is pretty good for 96 channels
-            params = Params(run, epochs = 100,
-                        comment = 'Like 17, 18 (96 channels) but adjust focal loss to improve precision',
-                        data_train='Eggs_train_no_small_23-02-15.h5', data_validation='Eggs_validation_tile_23-02-15.h5', 
-                        focal_loss_ag=(0.85,3.0),                          
-                        batch_size=4,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=96)
-        elif run==20:
-            params = Params(run, epochs = 100,
-                        comment = 'Similar to 19, but gamma 4',
-                        data_train='Eggs_train_no_small_23-02-15.h5', data_validation='Eggs_validation_tile_23-02-15.h5', 
-                        focal_loss_ag=(0.85,4.0),                          
-                        batch_size=4,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=96)
-        elif run==21:
-            # Building on run 15, but with 23-02-16 dataset now adds empty images in training
-            params = Params(run, epochs = 120,
-                        comment='Building on run 15, but with 23-02-16 dataset now adds empty images in training',
-                        data_train='Eggs_train_23-02-16.h5', data_validation='Eggs_validation_tile_23-02-16.h5', 
-                        data_test='Eggs_validation_large_23-02-16.h5',
-                        focal_loss_ag=(0.9,3.0),                          
-                        batch_size=4,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=64)
-        elif run==22:
-            # Building on run 20, but with 23-02-16 dataset now adds empty images in training
-            # Runs 22 and 21 are similar on tile validations, but 22 is better on full image validation
-            # I need to see if this is because of focal loss or because of max_chans ...
-            params = Params(run, epochs = 100,
-                        comment = 'Building on run 20, but with 23-02-16 dataset now adds empty images in training',
-                        data_train='Eggs_train_23-02-16.h5', 
-                        data_validation='Eggs_validation_tile_23-02-16.h5', 
-                        data_test='Eggs_validation_large_23-02-16.h5',
-                        focal_loss_ag=(0.85,4.0),                          
-                        batch_size=4,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=96)
-        elif run==23:
-            params = Params(run, epochs = 100,
-                        comment = 'Same as 22 but with 5 previous images',
-                        data_train='Eggs_train_23-02-18.h5', 
-                        data_validation='Eggs_validation_tile_23-02-18.h5', 
-                        data_test='Eggs_validation_large_23-02-18.h5',
-                        n_previous_images=5,
-                        focal_loss_ag=(0.85,4.0),                          
-                        batch_size=4,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=96)
-        elif run==24:
-            params = Params(run, epochs = 100,
-                        comment = '0 previous images, train 02-24, No merge',
-                        data_train='Eggs_train_23-02-24.h5', 
-                        data_validation='Eggs_validation_tile_23-02-18.h5', 
-                        data_test='Eggs_validation_large_23-02-18.h5',
-                        n_previous_images=0,
-                        pre_merge = False,
-                        post_merge = False,
-                        focal_loss_ag=(0.85,4.0),                          
-                        batch_size=6,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=96)
-        elif run==25:
-            params = Params(run, epochs = 100,
-                        comment = '2 previous images, train 02-24, Pre and Post merge',
-                        data_train='Eggs_train_23-02-24.h5', 
-                        data_validation='Eggs_validation_tile_23-02-18.h5', 
-                        data_test='Eggs_validation_large_23-02-18.h5',
-                        n_previous_images=2,
-                        pre_merge = True,
-                        post_merge = True,
-                        focal_loss_ag=(0.85,4.0),                          
-                        batch_size=6,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=96)
-        elif run==26:
-            params = Params(run, epochs = 100,
-                        comment = '3 previous images, train 02-24, Post-merge',
-                        data_train='Eggs_train_23-02-24.h5', 
-                        data_validation='Eggs_validation_tile_23-02-18.h5', 
-                        data_test='Eggs_validation_large_23-02-18.h5',
-                        n_previous_images=2,
-                        pre_merge = False,
-                        post_merge = True,
-                        focal_loss_ag=(0.85,4.0),                          
-                        batch_size=6,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=96)
-        elif run==27:
-            params = Params(run, epochs = 100,
-                        comment = '5 previous images, Pre-merge',
-                        data_train='Eggs_train_23-02-24.h5', 
-                        data_validation='Eggs_validation_tile_23-02-18.h5', 
-                        data_test='Eggs_validation_large_23-02-18.h5',
-                        n_previous_images=2,
-                        pre_merge = True,
-                        post_merge = False,
-                        focal_loss_ag=(0.85,4.0),                          
-                        batch_size=6,
-                        dilate=0.,  
-                        target_downscale=4,
-                        max_chans=96)
-            
-        else:
-            raise Exception(f'Undefined run: {run}')
-        return params
+            if epoch==best_epoch:
+                shutil.copy2(checkpoint_name, os.path.join(dir_checkpoint,'best_checkpoint.pth'))
 
 if __name__ == '__main__':
 
@@ -609,11 +275,12 @@ if __name__ == '__main__':
                     f'\t{model.n_classes} output channels (classes)\n'
                     f'\t{model.max_chans} max channels')
 
-        if params.load:
-            state_dict = torch.load(params.load, map_location=device)
+        if not params.load_opt is None:
+            cpts = find_last_checkpoints(params.output_dir, params.load_run)
+            state_dict = torch.load(cpts[0], map_location=device)
             # del state_dict['mask_values']
             model.load_state_dict(state_dict)
-            logging.info(f'Model loaded from {params.load}')
+            logging.info(f'Model loaded from {cpts[0]}')
 
         model.to(device=device)
 
