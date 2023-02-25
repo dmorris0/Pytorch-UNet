@@ -91,7 +91,11 @@ class OutConv(nn.Module):
 class Merge(nn.Module):
     def __init__(self, n_channels):
         super().__init__()
-        self.conv = nn.Conv2d( 2*n_channels, n_channels, kernel_size=1 )
+        self.conv = nn.Sequential(
+            nn.Conv2d( 2*n_channels, n_channels, kernel_size=1 ),
+            nn.BatchNorm2d(n_channels),
+            nn.ReLU(inplace=True)
+        )
     
     def forward(self, x1, x2=None):
         if x2 is None:

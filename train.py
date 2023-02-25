@@ -515,41 +515,57 @@ def get_run_params(run):
                         max_chans=96)
         elif run==24:
             params = Params(run, epochs = 100,
-                        comment = '5 previous images, Post-merge',
-                        data_train='Eggs_train_23-02-18.h5', 
+                        comment = '0 previous images, train 02-24, No merge',
+                        data_train='Eggs_train_23-02-24.h5', 
                         data_validation='Eggs_validation_tile_23-02-18.h5', 
                         data_test='Eggs_validation_large_23-02-18.h5',
-                        n_previous_images=5,
-                        post_merge = True,
+                        n_previous_images=0,
+                        pre_merge = False,
+                        post_merge = False,
                         focal_loss_ag=(0.85,4.0),                          
-                        batch_size=4,
+                        batch_size=6,
                         dilate=0.,  
                         target_downscale=4,
                         max_chans=96)
         elif run==25:
             params = Params(run, epochs = 100,
-                        comment = '5 previous images, Pre-merge',
-                        data_train='Eggs_train_23-02-18.h5', 
+                        comment = '2 previous images, train 02-24, Pre and Post merge',
+                        data_train='Eggs_train_23-02-24.h5', 
                         data_validation='Eggs_validation_tile_23-02-18.h5', 
                         data_test='Eggs_validation_large_23-02-18.h5',
-                        n_previous_images=5,
+                        n_previous_images=2,
                         pre_merge = True,
+                        post_merge = True,
                         focal_loss_ag=(0.85,4.0),                          
-                        batch_size=4,
+                        batch_size=6,
                         dilate=0.,  
                         target_downscale=4,
                         max_chans=96)
         elif run==26:
             params = Params(run, epochs = 100,
-                        comment = '5 previous images, Pre-merge and Post-merge',
-                        data_train='Eggs_train_23-02-18.h5', 
+                        comment = '3 previous images, train 02-24, Post-merge',
+                        data_train='Eggs_train_23-02-24.h5', 
                         data_validation='Eggs_validation_tile_23-02-18.h5', 
                         data_test='Eggs_validation_large_23-02-18.h5',
-                        n_previous_images=5,
-                        pre_merge = True,
+                        n_previous_images=2,
+                        pre_merge = False,
                         post_merge = True,
                         focal_loss_ag=(0.85,4.0),                          
-                        batch_size=4,
+                        batch_size=6,
+                        dilate=0.,  
+                        target_downscale=4,
+                        max_chans=96)
+        elif run==27:
+            params = Params(run, epochs = 100,
+                        comment = '5 previous images, Pre-merge',
+                        data_train='Eggs_train_23-02-24.h5', 
+                        data_validation='Eggs_validation_tile_23-02-18.h5', 
+                        data_test='Eggs_validation_large_23-02-18.h5',
+                        n_previous_images=2,
+                        pre_merge = True,
+                        post_merge = False,
+                        focal_loss_ag=(0.85,4.0),                          
+                        batch_size=6,
                         dilate=0.,  
                         target_downscale=4,
                         max_chans=96)
@@ -580,7 +596,7 @@ if __name__ == '__main__':
         if params.target_downscale==1:
             model = UNetSmall(n_channels=n_channels, n_classes=params.classes, max_chans=params.max_chans)
         elif params.target_downscale==4:
-            #model = UNetSmallQuarter(n_channels=3, n_classes=params.classes, max_chans=params.max_chans)
+            #model = UNetSmallQuarter(n_channels=n_channels, n_classes=params.classes, max_chans=params.max_chans)
             model = UNetBlocks(n_channels=3, n_classes=params.classes, max_chans=params.max_chans,
                                pre_merge = params.pre_merge, post_merge = params.post_merge)            
         else:
