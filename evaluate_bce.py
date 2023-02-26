@@ -9,6 +9,8 @@ import sys
 sys.path.append('../cvdemos/image')
 from heatmap_score import Peaks, MatchScore
 from image_dataset import up_scale_coords
+from timeit import default_timer as timer
+
 
 # from utils.dice_score import multiclass_dice_coeff, dice_coeff
 
@@ -72,19 +74,19 @@ class SaveResults:
             self.hf.close()
 
 @torch.inference_mode()
-def evaluate_bce(net, dataloader, device, criterion, amp, target_downscale, max_distance, step, h5filename=None):
+def evaluate_bce(net, dataloader, device, criterion, params, epoch, step, h5filename=None):
     net.eval()
     num_val_batches = len(dataloader)
     bce = 0
     scores = np.zeros( (3,) )
     peaks = Peaks(1, device)
     min_val = 0.
-    matches = MatchScore(max_distance = max_distance)
+    matches = MatchScore(max_distance = params.max_distance)
     save = None    
     Nb = len(dataloader)
 
     # iterate over the validation set
-    with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=amp):
+    with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=params.amp):
         for batch in tqdm(dataloader, total=num_val_batches, desc='Validation round', unit='batch', leave=False):
             image, mask_true, centers, ncen = batch['image'], batch['targets'], batch['centers'], batch['ncen']
 
@@ -92,34 +94,26 @@ def evaluate_bce(net, dataloader, device, criterion, amp, target_downscale, max_
             image = image.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
             # mask_true = mask_true.to(device=device, dtype=torch.long)
             mask_true = mask_true.to(device=device, dtype=float)
+            n_max = np.random.randint(params.n_previous_images+1) + 1 if params.n_previous_images and params.rand_previous else params.n_previous_images+1
 
             # predict the mask
-            mask_pred = net.apply_to_stack(image)
+            mask_pred = net.apply_to_stack(image, n_max)
 
-            detections = peaks.peak_coords( mask_pred, min_val=0.)
-            bscores,_,_ = matches.calc_match_scores( up_scale_coords( detections, target_downscale ), centers, ncen )
+            if epoch % params.dice_every_nth == 0:
+                detections = peaks.peak_coords( mask_pred, min_val=0.)
+                bscores,_,_ = matches.calc_match_scores( up_scale_coords( detections, params.target_downscale ), centers, ncen )
+            else:
+                bscores = np.nan*np.ones((params.batch_size,3))
 
-            if save is None:
-                save = SaveResults(h5filename=h5filename, batch=batch, Nb=Nb, step=step)
-            save.add( image, centers, ncen, mask_pred, bscores, min_val, max_distance, target_downscale )
+            #if save is None:
+            #    save = SaveResults(h5filename=h5filename, batch=batch, Nb=Nb, step=step)
+            #save.add( image, centers, ncen, mask_pred, bscores, min_val, params.max_distance, params.target_downscale )
 
             scores += bscores.sum(axis=0)
 
-            if net.n_classes == 1:
-                assert mask_true.min() >= 0 and mask_true.max() <= 1, 'True mask indices should be in [0, 1]'
+            assert mask_true.min() >= 0 and mask_true.max() <= 1, 'True mask indices should be in [0, 1]'
 
-                bce += criterion(mask_pred, mask_true)
-
-                # mask_pred = (F.sigmoid(mask_pred) > 0.5).float()
-                # compute the Dice score
-                #dice_score += dice_coeff(mask_pred, mask_true, reduce_batch_first=False)
-            else:
-                assert mask_true.min() >= 0 and mask_true.max() < net.n_classes, 'True mask indices should be in [0, n_classes['
-                # convert to one-hot format
-                mask_true = F.one_hot(mask_true, net.n_classes).permute(0, 3, 1, 2).float()
-                mask_pred = F.one_hot(mask_pred.argmax(dim=1), net.n_classes).permute(0, 3, 1, 2).float()
-                # compute the Dice score, ignoring background
-                #dice_score += multiclass_dice_coeff(mask_pred[:, 1:], mask_true[:, 1:], reduce_batch_first=False)
+            bce += criterion(mask_pred, mask_true)
 
     net.train()
 

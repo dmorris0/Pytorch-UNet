@@ -16,12 +16,13 @@ import platform
 import json
 import argparse
 import shutil
+from timeit import default_timer as timer
 
 import wandb
 from evaluate_bce import evaluate_bce
 from unet import UNet, UNetSmall, UNetSmallQuarter,  UNetBlocks
 from plot_data import save_scores, plot_scores
-from run_params import get_run_params, get_run_dirs, find_last_checkpoints
+from run_params import get_run_params, get_run_dirs, find_checkpoint
 
 dirname = os.path.dirname(__file__)
 dataset_path = os.path.join( os.path.dirname(dirname), 'cvdemos', 'image')
@@ -77,23 +78,30 @@ def train_model(
     os.makedirs( dir_plot, exist_ok=True)
 
     # (Initialize logging)
-    experiment = wandb.init(project='U-Net', resume='allow', anonymous='must')
-    wandb.run.name = f'run-{params.run}-{wandb.run.name}'
-    experiment.config.update(
-        dict(epochs=params.epochs, batch_size=params.batch_size, learning_rate=params.lr,
-             save_checkpoint=params.save_checkpoint, img_scale=params.scale, amp=params.amp)
-    )
-    with open(os.path.join(dir_run,'wandb-run-info.txt'),'w') as f:
-        print(f'{wandb.run.name}',file=f)
-        print(f'{wandb.run.get_url()}',file=f)
+    if params.do_wandb:
+        experiment = wandb.init(project='U-Net', resume='allow', anonymous='must')
+        wandb.run.name = f'run-{params.run}-{wandb.run.name}'
+        experiment.config.update(
+            dict(epochs=params.epochs, batch_size=params.batch_size, learning_rate=params.lr,
+                save_checkpoint=params.save_checkpoint, img_scale=params.scale, amp=params.amp)
+        )
+        with open(os.path.join(dir_run,'wandb-run-info.txt'),'w') as f:
+            print(f'{wandb.run.name}',file=f)
+            print(f'{wandb.run.get_url()}',file=f)
     with open(os.path.join(dir_run, 'params.json'),'w') as f:
         json.dump(vars(params), f, indent=4)    # Use vars() to convert it to a dict
 
     logging.info(f'''Starting training:
         Run:              {params.run}
+        Load-opt:         {params.load_opt}
+        Load-run:         {params.load_run}
         Output:           {params.output_dir}
         Epochs:           {params.epochs}        
         Batch size:       {params.batch_size}
+        N Prev Images     {params.n_previous_images}
+        Pre-Merge:        {params.pre_merge}
+        Post-Merge:       {params.post_merge}
+        Max-channels:     {params.max_chans}
         Learning rate:    {params.lr}
         Training size:    {n_train}
         Validation size:  {n_val}
@@ -102,7 +110,7 @@ def train_model(
         Images scaling:   {params.scale}
         Mixed Precision:  {params.amp}
         Focal Loss:       {params.focal_loss_ag}
-        Dilate:           {params.dilate}
+        Dice every Nth:   {params.dice_every_nth}
         Target Downscale: {params.target_downscale}
         Max Distance:     {params.max_distance}
     ''')
@@ -127,6 +135,7 @@ def train_model(
     best_val_dice = 0
     best_epoch = 0
 
+
     # 5. Begin training
     for epoch in range(1, params.epochs + 1):
         model.train()
@@ -138,14 +147,20 @@ def train_model(
 
                 images = images.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
                 true_masks = true_masks.to(device=device, dtype=float)  # BCE requires float
-                n_max = np.random.randint(params.n_previous_images+1) + 1 if params.n_previous_images and params.rand_previous else None
+                n_max = np.random.randint(params.n_previous_images+1) + 1 if params.n_previous_images and params.rand_previous else params.n_previous_images+1
 
                 with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=params.amp):
+
                     masks_pred = model.apply_to_stack(images, n_max)
                     loss = criterion(masks_pred, true_masks)
-                    detections = peaks.peak_coords( masks_pred.detach(), min_val=0.)                        
-                    iscores,_,_ = matches.calc_match_scores( detections, centers.detach()/params.target_downscale, ncen.detach() )
-                    totscores += np.concatenate( ((1,loss.item(),),iscores.sum(axis=0)) )
+
+                    if epoch % params.dice_every_nth == 0:
+                        detections = peaks.peak_coords( masks_pred.detach(), min_val=0.)                        
+                        iscores,_,_ = matches.calc_match_scores( detections, centers.detach()/params.target_downscale, ncen.detach() )
+                        scores = iscores.sum(axis=0)
+                    else:
+                        scores = np.nan * np.ones((3,))
+                    totscores += np.concatenate( ((1,loss.item(),),scores) )
 
 
                 optimizer.zero_grad(set_to_none=True)
@@ -157,44 +172,40 @@ def train_model(
                 pbar.update(images.shape[0])
                 global_step += 1
                 epoch_loss += loss.item()
-                experiment.log({
-                    'train loss': loss.item(),
-                    'step': global_step,
-                    'epoch': epoch
-                })
+
+                if params.do_wandb:
+                    experiment.log({
+                        'train loss': loss.item(),
+                        'step': global_step,
+                        'epoch': epoch
+                    })
                 pbar.set_postfix(**{'loss ': epoch_loss/(nb+1)})
 
-                # Evaluation round
-                #division_step = (n_train // (10 * batch_size))
-                #division_step = len(train_loader) 
-                #if division_step > 0:
-                #    if global_step % division_step == 0:
-                # The above allows validation to run during a training epoch.  I commented it out and shifted the below
-                # left 4 tabs so that it runs at the end of an epoch 
-        histograms = {}
-        for tag, value in model.named_parameters():
-            tag = tag.replace('/', '.')
-            if not torch.isinf(value).any():
-                histograms['Weights/' + tag] = wandb.Histogram(value.data.cpu())
-            if not torch.isinf(value.grad).any():
-                histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
+        if params.do_wandb:
+            histograms = {}
+            for tag, value in model.named_parameters():
+                tag = tag.replace('/', '.')
+                if not torch.isinf(value).any():
+                    histograms['Weights/' + tag] = wandb.Histogram(value.data.cpu())
+                if not torch.isinf(value.grad).any():
+                    histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
 
         val_loss, scores, val_dice, val_pr, val_re = evaluate_bce(
-                    model, val_loader, device, criterion, params.amp, 
-                    params.target_downscale, params.max_distance, global_step,
+                    model, val_loader, device, criterion, params, epoch, global_step,
                     os.path.join(dir_run,'val',f'step_{val_step:03d}.h5') )
-        if val_step>0:
-            os.remove(os.path.join(dir_run,'val',f'step_{val_step-1:03d}.h5'))  # delete previous file since pretty big
+        #if val_step>0:
+        #    os.remove(os.path.join(dir_run,'val',f'step_{val_step-1:03d}.h5'))  # delete previous file since pretty big
         bscores.append( np.concatenate( ((global_step,val_loss,),scores) ) )
         val_step += 1
         scheduler.step(val_dice)
-        if val_dice > best_val_dice:
+        if not np.isnan(val_dice) and val_dice > best_val_dice:
             best_epoch = epoch
             best_val_dice = val_dice
 
         logging.info(f'Validation Loss {val_loss:.3}, Dice {val_dice:.3f}, Pr {val_pr:.3f}, Re {val_re:.3f}')
         try:
-            experiment.log({
+            if params.do_wandb:
+                experiment.log({
                                 'learning rate': optimizer.param_groups[0]['lr'],
                                 'validation loss': val_loss,
                                 'validation dice': val_dice,
@@ -222,8 +233,7 @@ def train_model(
                 'best_epoch': best_epoch,
                 }, f, indent=4)    # Use vars() to convert it to a dict        
 
-        etscores.append(
-            np.array([global_step, totscores[1]/totscores[0], *totscores[2:]]))
+        etscores.append(np.array([global_step, totscores[1]/totscores[0], *totscores[2:]]))
         save_scores(os.path.join(dir_run, "train_scores.csv"), etscores)
         save_scores(os.path.join(dir_run, "val_scores.csv"), bscores)
         filename = os.path.join(dir_run,f"scores_{params.run:03d}.png")
@@ -275,17 +285,15 @@ if __name__ == '__main__':
                     f'\t{model.n_classes} output channels (classes)\n'
                     f'\t{model.max_chans} max channels')
 
-        if not params.load_opt is None:
-            cpts = find_last_checkpoints(params.output_dir, params.load_run)
-            state_dict = torch.load(cpts[0], map_location=device)
-            # del state_dict['mask_values']
+        cpoint = find_checkpoint(params)
+        if cpoint:
+            state_dict = torch.load(cpoint, map_location=device)
             model.load_state_dict(state_dict)
-            logging.info(f'Model loaded from {cpts[0]}')
+            logging.info(f'Model loaded from {cpoint}')
 
         model.to(device=device)
 
-        train_model(
-            model=model,
-            device=device,
-            params=params)
+        #import cProfile
+        #cProfile.run("train_model(model=model, device=device, params=params)", "profile_out")
+        train_model(model=model, device=device, params=params)
         

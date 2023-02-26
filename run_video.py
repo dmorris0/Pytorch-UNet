@@ -26,7 +26,7 @@ from heatmap_score import Peaks
 from synth_data import DrawData
 from image_dataset import up_scale_coords
 
-from train import get_run_params
+from run_params import get_run_params
 
 def is_30fps(name):
     return name[:3] == 'ch1' or name[:3] == 'ch2'
@@ -56,6 +56,7 @@ def run_model(
         print(f'Processing: {path.name}')
         cap = cv.VideoCapture(str(path))
         inc = 0
+        xout = [None, None]
         while True:
             cap.set(cv.CAP_PROP_POS_FRAMES, inc * nskip)
             ret, frame = cap.read()
@@ -66,10 +67,11 @@ def run_model(
                 imsize = (imsize[0]//2, imsize[1]//2, imsize[2])
                 frame = cv.resize(frame, (imsize[1],imsize[0]), interpolation=cv.INTER_LINEAR)
             img = torch.from_numpy(frame.astype(np.float32).transpose(2,0,1)/255)[None,...]
-            heatmap = model(img)
-            detections = peaks.peak_coords( heatmap, min_val=min_val )
-            scores = peaks.heatmap_vals(heatmap, detections, to_numpy=True)
-            vid_detect[str(inc)] = {"targets"} 
+            xout = model([img, xout[1]])
+            detections = peaks.peak_coords( xout[0], min_val=min_val )
+            scores = peaks.heatmap_vals( xout[0], detections, to_numpy=True)
+            vid_detect[str(inc)] = {"detections":detections,
+                                    "scores":scores} 
 
 
     test_loss, scores, test_dice, test_pr, test_re = evaluate_bce(

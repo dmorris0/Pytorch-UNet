@@ -9,12 +9,20 @@ def get_run_dirs(output_dir, run):
     dir_checkpoint = os.path.join(dir_run,'checkpoints')    
     return dir_run, dir_checkpoint
 
-def find_last_checkpoints(output_dir, run):
-    _,dir_checkpoint = get_run_dirs(output_dir, run)
-    checkpoints = [str(x) for x in list( Path(dir_checkpoint).glob('*.pth'))]
-    checkpoints.sort(reverse=True)
-    checkpoints = checkpoints[:2]
-    return checkpoints
+def find_checkpoint(params):
+    if params.load_opt is None:
+        return 
+    run = params.run if params.load_run is None else params.load_run
+    _,dir_checkpoint = get_run_dirs(params.output_dir, run)
+    if params.load_opt=='best':
+        cpoint = os.path.join(dir_checkpoint,'best_checkpoint.pth')
+    elif params.load_opt=='last':
+        checkpoints = [str(x) for x in list( Path(dir_checkpoint).glob('check*.pth'))]
+        checkpoints.sort()
+        cpoint = checkpoints[-1]
+    else:
+        raise Exception(f'Invalid params.load_opt: {params.load_opt}')
+    return cpoint
 
 class Params():
     def __init__(self,
@@ -27,9 +35,10 @@ class Params():
                  n_previous_images: int = 0,
                  rand_previous: bool = False,  # If true, randomly select 0 to n_previous for each batch
                  epochs: int = 10,
+                 dice_every_nth: int = 1,
                  batch_size: int = 4,
                  lr: float = 1e-6,
-                 load_opt: str = 'last',       # 'last': loads latest if available, 'best' loads best, None: does not load previous
+                 load_opt: str = None,       # 'last': loads latest if available, 'best' loads best, None: does not load previous
                  load_run: int = None,         # if None then current run, else choose a run
                  scale: float = 0.5,    # Downscaling factor of the images
                  amp: bool = False,     # Use mixed precision
@@ -47,6 +56,7 @@ class Params():
                  comment: str = '',
                  pre_merge: bool = False,
                  post_merge: bool = False,
+                 do_wandb: bool = False,
                  ):
         self.run = run
         self.data_dir = data_dir
@@ -57,6 +67,7 @@ class Params():
         self.n_previous_images = n_previous_images
         self.rand_previous = rand_previous
         self.epochs = epochs
+        self.dice_every_nth = dice_every_nth
         self.batch_size = batch_size
         self.lr = lr
         self.load_opt = load_opt
@@ -77,6 +88,7 @@ class Params():
         self.comment = comment
         self.pre_merge = pre_merge
         self.post_merge = post_merge
+        self.do_wandb = do_wandb
 
         if not self.data_dir:
             if not os.name =="nt":
@@ -93,12 +105,13 @@ def get_run_params(run):
                         data_train='Eggs_train_small.h5', data_validation=None,
                         )
         elif run==1:
-            params = Params(run, epochs = 1,
-                        data_train='Eggs_train_small.h5', data_validation=None, 
-                        focal_loss_ag=None,      
-                        dilate=0.,  
-                        target_downscale=4,
-                        num_workers=0,
+            params = Params(run, epochs = 4,
+                        comment = 'test train',
+                        data_train='Eggs_train_23-02-15.h5', 
+                        data_validation='Eggs_validation_tile_23-02-15.h5', 
+                        focal_loss_ag=(0.85,4.0),                          
+                        batch_size=4,
+                        dice_every_nth=2,
                         max_chans=96)
         elif run==2:
             params = Params(run, epochs = 80,
@@ -456,6 +469,155 @@ def get_run_params(run):
                         focal_loss_ag=(0.85,4.0),                          
                         batch_size=6,
                         max_chans=96)
+        elif run==34:
+            params = Params(run, epochs = 50,
+                        comment = '0 previous, continues 31',
+                        data_train='Eggs_train_23-02-25.h5', 
+                        data_validation='Eggs_validation_tile_23-02-25.h5', 
+                        data_test='Eggs_validation_large_23-02-25.h5',
+                        load_opt='last',
+                        load_run=31,
+                        n_previous_images=0,
+                        pre_merge = False,
+                        post_merge = False,
+                        focal_loss_ag=(0.85,4.0),                          
+                        batch_size=8,
+                        max_chans=96)
+        elif run==35:
+            params = Params(run, epochs = 50,
+                        comment = '0 to 4 previous, post_merge, continues 32',
+                        data_train='Eggs_train_23-02-25.h5', 
+                        data_validation='Eggs_validation_tile_23-02-25.h5', 
+                        data_test='Eggs_validation_large_23-02-25.h5',
+                        load_opt='last',
+                        load_run=32,
+                        n_previous_images=4,
+                        rand_previous=True,
+                        pre_merge = False,
+                        post_merge = True,
+                        focal_loss_ag=(0.85,4.0),                          
+                        batch_size=8,
+                        max_chans=96)
+        elif run==36:
+            params = Params(run, epochs = 50,
+                        comment = '0 to 4 previous, pre_merge, continues 33',
+                        data_train='Eggs_train_23-02-25.h5', 
+                        data_validation='Eggs_validation_tile_23-02-25.h5', 
+                        data_test='Eggs_validation_large_23-02-25.h5',
+                        load_opt='last',
+                        load_run=33,
+                        n_previous_images=4,
+                        rand_previous=True,
+                        pre_merge = True,
+                        post_merge = False,
+                        focal_loss_ag=(0.85,4.0),                          
+                        batch_size=8,
+                        max_chans=96)
+        elif run==37:
+            params = Params(run, epochs = 50,
+                        comment = '0 to 4 previous, pre_merge and post-merge',
+                        data_train='Eggs_train_23-02-25.h5', 
+                        data_validation='Eggs_validation_tile_23-02-25.h5', 
+                        data_test='Eggs_validation_large_23-02-25.h5',
+                        load_opt=None,
+                        load_run=None,
+                        n_previous_images=4,
+                        rand_previous=True,
+                        pre_merge = True,
+                        post_merge = True,
+                        focal_loss_ag=(0.85,4.0),                          
+                        batch_size=8,
+                        max_chans=96)
+        elif run==38:
+            params = Params(run, epochs = 120,
+                        comment = '0 previous, 23-02-26 training (more negatives)',
+                        data_train='Eggs_train_23-02-26.h5', 
+                        data_validation='Eggs_validation_tile_23-02-26.h5', 
+                        data_test='Eggs_validation_large_23-02-25.h5',
+                        load_opt='last',
+                        load_run=None,
+                        n_previous_images=0,
+                        pre_merge = False,
+                        post_merge = False,
+                        focal_loss_ag=(0.85,4.0),                          
+                        batch_size=8,
+                        max_chans=96)
+        elif run==39:
+            params = Params(run, epochs = 50,
+                        comment = '0 to 4 previous, pre_merge and post-merge',
+                        data_train='Eggs_train_23-02-26.h5', 
+                        data_validation='Eggs_validation_tile_23-02-26.h5', 
+                        data_test='Eggs_validation_large_23-02-25.h5',
+                        load_opt='last',
+                        load_run=37,
+                        n_previous_images=4,
+                        rand_previous=True,
+                        pre_merge = True,
+                        post_merge = True,
+                        focal_loss_ag=(0.85,4.0),                          
+                        batch_size=8,
+                        max_chans=96)            
+        elif run==40:
+            params = Params(run, epochs = 120,
+                        comment = '0 previous, 23-02-27 training',
+                        data_train='Eggs_train_23-02-27.h5', 
+                        data_validation='Eggs_validation_tile_23-02-26.h5', 
+                        data_test='Eggs_validation_large_23-02-25.h5',
+                        load_opt=None,
+                        load_run=None,
+                        n_previous_images=0,
+                        pre_merge = False,
+                        post_merge = False,
+                        focal_loss_ag=(0.85,4.0),                          
+                        dice_every_nth=1,
+                        batch_size=8,
+                        max_chans=96)
+        elif run==41:
+            params = Params(run, epochs = 100,
+                        comment = '0 to 4 previous, pre_merge',
+                        data_train='Eggs_train_23-02-27.h5', 
+                        data_validation='Eggs_validation_tile_23-02-26.h5', 
+                        data_test='Eggs_validation_large_23-02-25.h5',
+                        load_opt=None,
+                        load_run=None,
+                        n_previous_images=4,
+                        rand_previous=True,
+                        pre_merge = True,
+                        post_merge = False,
+                        focal_loss_ag=(0.85,4.0),                          
+                        dice_every_nth=1,
+                        batch_size=8,
+                        max_chans=96)            
+        elif run==42:
+            params = Params(run, epochs = 100,
+                        comment = '0 to 4 previous, post_merge',
+                        data_train='Eggs_train_23-02-27.h5', 
+                        data_validation='Eggs_validation_tile_23-02-26.h5', 
+                        data_test='Eggs_validation_large_23-02-25.h5',
+                        load_opt=None,
+                        load_run=None,
+                        n_previous_images=4,
+                        rand_previous=True,
+                        pre_merge = False,
+                        post_merge = True,
+                        focal_loss_ag=(0.85,4.0),                          
+                        batch_size=8,
+                        max_chans=96)            
+        elif run==43:
+            params = Params(run, epochs = 100,
+                        comment = '0 to 4 previous, pre_merge and post_merge',
+                        data_train='Eggs_train_23-02-27.h5', 
+                        data_validation='Eggs_validation_tile_23-02-26.h5', 
+                        data_test='Eggs_validation_large_23-02-25.h5',
+                        load_opt=None,
+                        load_run=None,
+                        n_previous_images=4,
+                        rand_previous=True,
+                        pre_merge = True,
+                        post_merge = True,
+                        focal_loss_ag=(0.85,4.0),                          
+                        batch_size=8,
+                        max_chans=96)            
             
         else:
             raise Exception(f'Undefined run: {run}')
