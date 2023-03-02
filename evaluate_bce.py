@@ -10,7 +10,7 @@ sys.path.append('../cvdemos/image')
 from heatmap_score import Peaks, MatchScore
 from image_dataset import up_scale_coords
 from timeit import default_timer as timer
-
+from run_params import get_run_params
 
 # from utils.dice_score import multiclass_dice_coeff, dice_coeff
 
@@ -79,7 +79,7 @@ def evaluate_bce(net, dataloader, device, criterion, params, epoch, step, h5file
     num_val_batches = len(dataloader)
     bce = 0
     scores = np.zeros( (3,) )
-    peaks = Peaks(1, device)
+    peaks = Peaks(1, device, min_val=0.)
     min_val = 0.
     matches = MatchScore(max_distance = params.max_distance)
     save = None    
@@ -100,7 +100,7 @@ def evaluate_bce(net, dataloader, device, criterion, params, epoch, step, h5file
             mask_pred = net.apply_to_stack(image, n_max)
 
             if epoch % params.dice_every_nth == 0:
-                detections = peaks.peak_coords( mask_pred, min_val=0.)
+                detections = peaks.peak_coords( mask_pred)
                 bscores,_,_ = matches.calc_match_scores( up_scale_coords( detections, params.target_downscale ), centers, ncen )
             else:
                 bscores = np.nan*np.ones((params.batch_size,3))

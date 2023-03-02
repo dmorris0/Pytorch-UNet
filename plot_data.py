@@ -4,11 +4,38 @@ import argparse
 import os, platform
 import csv
 import matplotlib.pyplot as plt
+from matplotlib.patches import Circle
 from pathlib import Path
 import numpy as np
+import shutil
 import sys
 sys.path.append('../cvdemos/image')
-from synth_data import DrawData
+from run_params import get_run_params
+
+
+def draw_targets(ax, targets, radius, color ):
+    ax.set_xlim(*ax.get_xlim())
+    ax.set_ylim(*ax.get_ylim())
+    if radius==0:
+        xy = np.array(targets)
+        ax.plot(xy[:,0], xy[:,1],'+',color=color, markeredgewidth=2., markersize=10.)
+    else:
+        for xy in targets:
+            circ = Circle( xy, radius, color=color,  linewidth=2., fill=False)
+            ax.add_patch(circ)
+
+def plot_detections(img, targets, radius, name=''):
+    fig = plt.figure(num='Image', figsize=(6,6) )
+    fig.clf()
+    ax = fig.add_subplot(1, 1, 1)
+    ax.imshow(img, vmin=0, vmax=255, cmap="gray")
+    draw_targets(ax, targets, radius, color=(1.,.5,.2))
+    ax.set_title(f'{name}: {targets.shape[0]}')
+    fig.canvas.draw()
+    fig.canvas.flush_events()
+    plt.show(block=True)
+
+
 
 def save_scores(filename, scores):
     scores = np.array(scores) if isinstance(scores,list) else scores
@@ -54,8 +81,9 @@ def plot_scores(train_scores, val_scores, run, filename=None, comment=''):
         ax.plot(train_scores[good,0], dice,'-',label='Dice')
         ax.plot(train_scores[good,0], precision,'-',label='Precision')
         ax.plot(train_scores[good,0], recall,'-',label='Recall')
-        ax.set_title(f'Train, Max Dice: {dice.max():.3}')
-        ax.set_ylim( 0, 1)
+        ax.set_title(f'Train, Max Dice: {dice.max():.3}, Index: {np.argmax(dice)} / {dice.size}')
+        ymin = np.floor(np.array([dice[-4:].min(),precision[-4:].min(),recall[-4:].min()]).min()*5)/5
+        ax.set_ylim( ymin, 1)
         ax.grid()
         ax.legend()
     ax = fig.add_subplot(3,1,3)
@@ -65,8 +93,9 @@ def plot_scores(train_scores, val_scores, run, filename=None, comment=''):
         ax.plot(val_scores[good,0], dice,'-',label='Dice')
         ax.plot(val_scores[good,0], precision,'-',label='Precision')
         ax.plot(val_scores[good,0], recall,'-',label='Recall')
-        ax.set_title(f'Validation, Max Dice: {dice.max():.3}')
-        ax.set_ylim( 0, 1)
+        ax.set_title(f'Validation, Max Dice: {dice.max():.3}, Index: {np.argmax(dice)} / {dice.size}')
+        ymin = np.floor(np.array([dice[-4:].min(),precision[-4:].min(),recall[-4:].min()]).min()*5)/5
+        ax.set_ylim( ymin, 1)
         ax.grid()
         ax.legend()
     if comment:
@@ -85,6 +114,8 @@ if __name__=="__main__":
 
     args = parser.parse_args()
 
+    params = get_run_params(args.run)
+
     overwrite_png = True
 
     if not os.name =="nt":
@@ -94,9 +125,7 @@ if __name__=="__main__":
     else:
         raise Exception(f"Unknown platform: {platform.node()}")
 
-
-    output_dir ='out_eggs'
-    run_dir = os.path.join(os.path.dirname(__file__), output_dir, f'{args.run:03d}')
+    run_dir = os.path.join(os.path.dirname(__file__), params.output_dir, f'{args.run:03d}')
 
     #etscores = read_scores(os.path.join(run_dir,"train_epoch_scores.csv"))
     tscores = read_scores(os.path.join(run_dir,"train_scores.csv"))
@@ -104,7 +133,10 @@ if __name__=="__main__":
 
     outpng = os.path.join(run_dir,f"scores_{args.run:03d}.png") if overwrite_png else None
 
-    plot_scores(tscores, vscores, args.run, outpng)    
+    dir_plot = os.path.join(params.output_dir,'Plots')
+    plot_scores(tscores, vscores, args.run, outpng, comment = params.comment)    
+
+    shutil.copy2(outpng, dir_plot)
 
     if args.test:
         test_scores = read_scores(os.path.join(run_dir,"test_scores.csv"))
@@ -117,13 +149,14 @@ if __name__=="__main__":
         print(f'Dice: {dice:.3}, Precision: {precision:.3}, Recall: {recall:.3}')
         print('='*80)
 
-    if args.test:
-        files = [str(x) for x in list(Path(os.path.join(run_dir,'test')).glob('*.h5'))]
-    else:
-        files = [str(x) for x in list(Path(os.path.join(run_dir,'val')).glob('*.h5'))]
-    files.sort()
-    filename = files[-1]
+    if False:
+        if args.test:
+            files = [str(x) for x in list(Path(os.path.join(run_dir,'test')).glob('*.h5'))]
+        else:
+            files = [str(x) for x in list(Path(os.path.join(run_dir,'val')).glob('*.h5'))]
+        files.sort()
+        filename = files[-1]
 
-    dd = DrawData(filename, recalc_scores=True)
-    dd.plot()
+        dd = DrawData(filename, recalc_scores=True)
+        dd.plot()
     

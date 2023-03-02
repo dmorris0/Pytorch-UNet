@@ -16,12 +16,11 @@ import platform
 import json
 import argparse
 import shutil
-from timeit import default_timer as timer
 
 import wandb
 from evaluate_bce import evaluate_bce
 from unet import UNet, UNetSmall, UNetSmallQuarter,  UNetBlocks
-from plot_data import save_scores, plot_scores
+from plot_data import save_scores, read_scores, plot_scores
 from run_params import get_run_params, get_run_dirs, find_checkpoint
 
 dirname = os.path.dirname(__file__)
@@ -39,10 +38,7 @@ def get_criterion(params, pos_weight = torch.Tensor([1.])):
             inputs, targets, alpha=params.focal_loss_ag[0], gamma=params.focal_loss_ag[1], reduction='mean')
     return criterion
 
-def train_model(
-        model,
-        device,
-        params):
+def train_model( model, device, params, epoch):
 
     # 1. Create dataset
     if params.data_validation is None:
@@ -91,33 +87,39 @@ def train_model(
     with open(os.path.join(dir_run, 'params.json'),'w') as f:
         json.dump(vars(params), f, indent=4)    # Use vars() to convert it to a dict
 
+    # Check if we are resuming or starting from scratch:
+    if epoch>0:
+        etscores = read_scores(os.path.join(dir_run, "train_scores.csv")).tolist()
+        bscores = read_scores(os.path.join(dir_run, "val_scores.csv")).tolist()
+        with open(os.path.join(dir_run, 'train', f'log_{epoch:03d}.json'),'r') as f:
+            logparams = json.load(f)
+        global_step, best_val_dice, best_epoch = logparams['step'], logparams['best_val_dice'], logparams['best_epoch']
+        lr = logparams['lr']
+        val_step = logparams['val_step'] if 'val_step' in logparams else logparams['epoch']
+    else:
+        lr = params.lr
+        global_step, val_step, best_val_dice, best_epoch = 0, 0, 0, 0
+        etscores, bscores = [], []
+
     logging.info(f'''Starting training:
         Run:              {params.run}
+        Start epoch:      {epoch+1}
         Load-opt:         {params.load_opt}
         Load-run:         {params.load_run}
-        Output:           {params.output_dir}
-        Epochs:           {params.epochs}        
+        Epochs:           {params.epochs}     
+        Max Channels:     {params.max_chans}   
         Batch size:       {params.batch_size}
         N Prev Images     {params.n_previous_images}
         Pre-Merge:        {params.pre_merge}
         Post-Merge:       {params.post_merge}
-        Max-channels:     {params.max_chans}
         Learning rate:    {params.lr}
-        Training size:    {n_train}
-        Validation size:  {n_val}
-        Checkpoints:      {params.save_checkpoint}
         Device:           {device.type}
-        Images scaling:   {params.scale}
-        Mixed Precision:  {params.amp}
         Focal Loss:       {params.focal_loss_ag}
-        Dice every Nth:   {params.dice_every_nth}
-        Target Downscale: {params.target_downscale}
-        Max Distance:     {params.max_distance}
     ''')
 
     # 4. Set up the optimizer, the loss, the learning rate scheduler and the loss scaling for AMP
     optimizer = optim.RMSprop(model.parameters(),
-                              lr=params.lr, weight_decay=params.weight_decay, momentum=params.momentum, foreach=True)
+                              lr=lr, weight_decay=params.weight_decay, momentum=params.momentum, foreach=True)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=5)  # goal: maximize Dice score
     grad_scaler = torch.cuda.amp.GradScaler(enabled=params.amp)
 
@@ -125,19 +127,11 @@ def train_model(
     pos_weight = torch.Tensor([data_pos_weight/params.target_downscale**2]).to(device)
     criterion = get_criterion(params, pos_weight)  # pos_weight is only used if not doing focal loss
 
-    global_step = 0
-    val_step = 0
-
-    peaks = Peaks(1, device)
+    peaks = Peaks(1, device, min_val=0.)
     matches = MatchScore(max_distance = params.max_distance/params.target_downscale)
-    etscores = []
-    bscores = []
-    best_val_dice = 0
-    best_epoch = 0
-
 
     # 5. Begin training
-    for epoch in range(1, params.epochs + 1):
+    for epoch in range(epoch+1, params.epochs + 1):
         model.train()
         epoch_loss = 0
         totscores = np.zeros( (5,))
@@ -155,7 +149,7 @@ def train_model(
                     loss = criterion(masks_pred, true_masks)
 
                     if epoch % params.dice_every_nth == 0:
-                        detections = peaks.peak_coords( masks_pred.detach(), min_val=0.)                        
+                        detections = peaks.peak_coords( masks_pred.detach() )                        
                         iscores,_,_ = matches.calc_match_scores( detections, centers.detach()/params.target_downscale, ncen.detach() )
                         scores = iscores.sum(axis=0)
                     else:
@@ -231,6 +225,7 @@ def train_model(
                 'val_dice': val_dice,
                 'best_val_dice': best_val_dice,
                 'best_epoch': best_epoch,
+                'val_step': val_step,
                 }, f, indent=4)    # Use vars() to convert it to a dict        
 
         etscores.append(np.array([global_step, totscores[1]/totscores[0], *totscores[2:]]))
@@ -266,26 +261,15 @@ if __name__ == '__main__':
             device = torch.device('cpu')  # My windows GPU is very slow
         else:
             device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-        logging.info(f'Using device {device}')
 
         n_channels = (params.n_previous_images + 1) * 3
-        if params.target_downscale==1:
-            model = UNetSmall(n_channels=n_channels, n_classes=params.classes, max_chans=params.max_chans)
-        elif params.target_downscale==4:
-            #model = UNetSmallQuarter(n_channels=n_channels, n_classes=params.classes, max_chans=params.max_chans)
-            model = UNetBlocks(n_channels=3, n_classes=params.classes, max_chans=params.max_chans,
+        assert params.target_downscale==4, f'Assumes downscaling by 4'
+        model = UNetBlocks(n_channels=3, n_classes=params.classes, max_chans=params.max_chans,
                                pre_merge = params.pre_merge, post_merge = params.post_merge)            
-        else:
-            raise Exception(f'Invalid target_downscale: {params.target_downscale}')
 
         model = model.to(memory_format=torch.channels_last)
 
-        logging.info(f'Network:\n'
-                    f'\t{model.n_channels} input channels\n'
-                    f'\t{model.n_classes} output channels (classes)\n'
-                    f'\t{model.max_chans} max channels')
-
-        cpoint = find_checkpoint(params)
+        cpoint, epoch = find_checkpoint(params)
         if cpoint:
             state_dict = torch.load(cpoint, map_location=device)
             model.load_state_dict(state_dict)
@@ -293,7 +277,5 @@ if __name__ == '__main__':
 
         model.to(device=device)
 
-        #import cProfile
-        #cProfile.run("train_model(model=model, device=device, params=params)", "profile_out")
-        train_model(model=model, device=device, params=params)
+        train_model(model=model, device=device, params=params, epoch=epoch)
         
