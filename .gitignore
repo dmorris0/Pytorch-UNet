@@ -12,3 +12,4 @@ wandb/
 *.csv
 out_eggs/
 scores.png
+Plots
