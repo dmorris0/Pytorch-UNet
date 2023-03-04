@@ -8,10 +8,11 @@ from matplotlib.patches import Circle
 from pathlib import Path
 import numpy as np
 import shutil
+
+from run_params import get_run_params
 import sys
 sys.path.append('../cvdemos/image')
-from run_params import get_run_params
-
+from synth_data import DrawData
 
 def draw_targets(ax, targets, radius, color ):
     ax.set_xlim(*ax.get_xlim())
@@ -125,13 +126,13 @@ if __name__=="__main__":
     else:
         raise Exception(f"Unknown platform: {platform.node()}")
 
-    run_dir = os.path.join(os.path.dirname(__file__), params.output_dir, f'{args.run:03d}')
+    dir_run = os.path.join(os.path.dirname(__file__), params.output_dir, f'{args.run:03d}')
 
-    #etscores = read_scores(os.path.join(run_dir,"train_epoch_scores.csv"))
-    tscores = read_scores(os.path.join(run_dir,"train_scores.csv"))
-    vscores = read_scores(os.path.join(run_dir,"val_scores.csv"))
+    #etscores = read_scores(os.path.join(dir_run,"train_epoch_scores.csv"))
+    tscores = read_scores(os.path.join(dir_run,"train_scores.csv"))
+    vscores = read_scores(os.path.join(dir_run,"val_scores.csv"))
 
-    outpng = os.path.join(run_dir,f"scores_{args.run:03d}.png") if overwrite_png else None
+    outpng = os.path.join(dir_run,f"scores_{args.run:03d}.png") if overwrite_png else None
 
     dir_plot = os.path.join(params.output_dir,'Plots')
     plot_scores(tscores, vscores, args.run, outpng, comment = params.comment)    
@@ -139,7 +140,7 @@ if __name__=="__main__":
     shutil.copy2(outpng, dir_plot)
 
     if args.test:
-        test_scores = read_scores(os.path.join(run_dir,"test_scores.csv"))
+        test_scores = read_scores(os.path.join(dir_run,"test_scores.csv"))
         scores = test_scores[0,2:].round().astype(int)
         dice = 2*scores[0] / (scores[0]+scores.sum()+1e-3)
         precision = scores[0]/ (scores[0]+scores[1]+1e-3)
@@ -149,11 +150,15 @@ if __name__=="__main__":
         print(f'Dice: {dice:.3}, Precision: {precision:.3}, Recall: {recall:.3}')
         print('='*80)
 
+        outname = os.path.join(dir_run,'test',f'output.h5')
+        dd = DrawData(outname, recalc_scores=True)
+        dd.plot()
+
     if False:
         if args.test:
-            files = [str(x) for x in list(Path(os.path.join(run_dir,'test')).glob('*.h5'))]
+            files = [str(x) for x in list(Path(os.path.join(dir_run,'test')).glob('*.h5'))]
         else:
-            files = [str(x) for x in list(Path(os.path.join(run_dir,'val')).glob('*.h5'))]
+            files = [str(x) for x in list(Path(os.path.join(dir_run,'val')).glob('*.h5'))]
         files.sort()
         filename = files[-1]
 

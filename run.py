@@ -16,7 +16,7 @@ import json
 import argparse
 
 from evaluate_bce import evaluate_bce
-from unet import UNet, UNetSmall, UNetSmallQuarter
+from unet import UNetBlocks
 from plot_data import save_scores, plot_scores
 
 dirname = os.path.dirname(__file__)
@@ -25,8 +25,8 @@ sys.path.append(dataset_path)
 from image_dataset import ImageData
 from synth_data import DrawData
 
-from train import get_run_params, get_criterion
-
+from run_params import get_run_params, find_checkpoint
+from train import get_criterion
 
 def run_model(
         model,
@@ -49,24 +49,23 @@ def run_model(
     loader_args = dict(batch_size=1, num_workers=num_workers, pin_memory=True)
     test_loader = DataLoader(test_set, shuffle=False, drop_last=False, **loader_args)
 
-    run_dir = os.path.join(os.path.dirname(__file__), params.output_dir, f'{params.run:03d}')
-    os.makedirs(os.path.join(run_dir,'test'), exist_ok=True)
-    outname = os.path.join(run_dir,'test',f'output.h5')
+    dir_run = os.path.join(os.path.dirname(__file__), params.output_dir, f'{params.run:03d}')
+    os.makedirs(os.path.join(dir_run,'test'), exist_ok=True)
+    outname = os.path.join(dir_run,'test',f'output.h5')
 
     # Find positive weights for single-pixel positives:
     pos_weight = torch.Tensor([data_pos_weight/params.target_downscale**2]).to(device)
     criterion = get_criterion(params, pos_weight)
 
     test_loss, scores, test_dice, test_pr, test_re = evaluate_bce(
-                    model, test_loader, device, criterion, params.amp, 
-                    params.target_downscale, params.max_distance, 0,
-                    outname )
+                    model, test_loader, device, criterion, params,
+                    0, 0, outname )
 
     print(f'Dice: {test_dice:.3}, Precision: {test_pr:.3}, Recall: {test_re:.3}')
 
     testscores = np.concatenate( ((0,test_loss,),scores) ) 
 
-    save_scores(os.path.join(run_dir, "test_scores.csv"), testscores)
+    save_scores(os.path.join(dir_run, "test_scores.csv"), testscores)
 
     print(f'To see plots again run: python plot_data.py {params.run} --test')
     dd = DrawData(outname)
@@ -81,7 +80,8 @@ if __name__ == '__main__':
     for run in args.runlist:
 
         params = get_run_params(run)
-
+        params.load_opt = 'best'
+        params.load_run = None
         print(80*"=")
         if os.name == 'nt':        
             device = torch.device('cpu')  # My windows GPU is very slow
@@ -89,22 +89,17 @@ if __name__ == '__main__':
             device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
         n_channels = (params.n_previous_images + 1) * 3
-        if params.target_downscale==1:
-            model = UNetSmall(n_channels=n_channels, n_classes=params.classes, max_chans=params.max_chans)
-        elif params.target_downscale==4:
-            model = UNetSmallQuarter(n_channels=n_channels, n_classes=params.classes, max_chans=params.max_chans)
-        else:
-            raise Exception(f'Invalid target_downscale: {params.target_downscale}')
-
+        model = UNetBlocks(n_channels=3, n_classes=params.classes, max_chans=params.max_chans,
+                        pre_merge = params.pre_merge, post_merge = params.post_merge)   
         model = model.to(memory_format=torch.channels_last)
 
-        run_dir = os.path.join(os.path.dirname(__file__), params.output_dir, f'{run:03d}')
-        dir_checkpoint = Path(os.path.join(run_dir,'checkpoints'))
-        files = [str(x) for x in list(dir_checkpoint.glob('*.pth'))]
-        files.sort()
-        checkpoint_file = files[-1]
-        state_dict = torch.load(checkpoint_file, map_location=device)
-        model.load_state_dict(state_dict)
+        cpoint, epoch = find_checkpoint(params)
+        if cpoint:
+            state_dict = torch.load(cpoint, map_location=device)
+            model.load_state_dict(state_dict)
+            print(f'Model loaded: {cpoint}')
+        else:
+            raise Exception('No model checkpoint')
 
         model.to(device=device)
 

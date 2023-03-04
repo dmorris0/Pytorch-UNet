@@ -105,9 +105,10 @@ def evaluate_bce(net, dataloader, device, criterion, params, epoch, step, h5file
             else:
                 bscores = np.nan*np.ones((params.batch_size,3))
 
-            #if save is None:
-            #    save = SaveResults(h5filename=h5filename, batch=batch, Nb=Nb, step=step)
-            #save.add( image, centers, ncen, mask_pred, bscores, min_val, params.max_distance, params.target_downscale )
+            if not h5filename is None:
+                if save is None:
+                    save = SaveResults(h5filename=h5filename, batch=batch, Nb=Nb, step=step)
+                save.add( image, centers, ncen, mask_pred, bscores, min_val, params.max_distance, params.target_downscale )
 
             scores += bscores.sum(axis=0)
 

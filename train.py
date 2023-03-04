@@ -185,10 +185,8 @@ def train_model( model, device, params, epoch):
                     histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
 
         val_loss, scores, val_dice, val_pr, val_re = evaluate_bce(
-                    model, val_loader, device, criterion, params, epoch, global_step,
-                    os.path.join(dir_run,'val',f'step_{val_step:03d}.h5') )
-        #if val_step>0:
-        #    os.remove(os.path.join(dir_run,'val',f'step_{val_step-1:03d}.h5'))  # delete previous file since pretty big
+                    model, val_loader, device, criterion, params, epoch, global_step )
+        
         bscores.append( np.concatenate( ((global_step,val_loss,),scores) ) )
         val_step += 1
         scheduler.step(val_dice)
