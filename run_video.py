@@ -1,24 +1,17 @@
 import os
 import sys
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torchvision.transforms as transforms
-import torchvision.transforms.functional as TF
-import torchvision.ops
 from pathlib import Path
-from torch import optim
-from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 import numpy as np
-import platform
 import json
 import argparse
 import cv2 as cv
 import logging
-from timeit import default_timer as timer
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
+import threading
+from timeit import default_timer as timer
 import time
 
 from unet import UNetBlocks
@@ -88,24 +81,38 @@ class ImageReader:
 
 class PlotVideo:
 
-    def __init__(self, reader, model, peaks, out_name=None, noplot=False, radius=12):
+    def __init__(self, reader, model, device, peaks, out_name=None, noplot=False, radius=12, figname='Camera', compare_name=None):
 
         self.reader = reader
         self.model = model
+        self.device = device
         self.peaks = peaks
         print(f'Running on {self.reader.nsamp} frames from {reader.name}')
 
         self.name = Path(reader.name).name
+        self.figname = figname
         self.fig = None
         self.radius = radius
         self.xout = [None, None]
         self.inc = -1
         self.next_video = True
 
+        if compare_name is None:
+            self.compare_annotations = None
+        else:
+            print(f'Comparing with: {compare_name}')
+            with open(compare_name, 'r') as f:
+                self.compare_annotations = json.load(f)
+                self.compare_annotations['peak_vals'] = np.array(self.compare_annotations['peak_vals'])
+                self.compare_annotations['indices'] = np.array(self.compare_annotations['indices'])
+                self.compare_annotations['x'] = np.array(self.compare_annotations['x'])
+                self.compare_annotations['y'] = np.array(self.compare_annotations['y'])
+
         self.out_name = out_name
         self.noplot = noplot
         if self.out_name is None:
             self.get_next()
+            self.compare()
             self.plot()
             plt.show()
         else:
@@ -115,6 +122,7 @@ class PlotVideo:
         self.xout = [None, None]
         peak_vals, indices, x, y = [], [], [], []
 
+        start_time = timer()
         while True:
             self.get_next()
             if self.frame is None:
@@ -131,6 +139,7 @@ class PlotVideo:
             if not self.noplot:
                 self.plot()
                 plt.show(block=False)
+        total_time = timer() - start_time
 
         vid_detect = {  'video': self.reader.name,
                         'samples_per_sec': self.reader.samples_per_sec,
@@ -140,10 +149,9 @@ class PlotVideo:
                         'x': x,
                         'y': y,
                       }
-        print(f'  Detections: {(np.array(peak_vals)>0).sum()} > 0, {(np.array(peak_vals)<0).sum()} <= 0', end='')        
+        print(f'  Detections: {(np.array(peak_vals)>0).sum()} > 0, {(np.array(peak_vals)<0).sum()} <= 0 --> {Path(self.out_name).name}.  Done in {total_time/60:.1} min')        
         with open(self.out_name, 'w') as f:
             json.dump(vid_detect, f, indent=2)
-        print(f'  Wrote: {Path(self.out_name).name}')
             
 
     def get_next(self):
@@ -152,8 +160,8 @@ class PlotVideo:
         if ret:
             self.frame = cv.cvtColor(frame, cv.COLOR_BGR2RGB)  # Trained on RGB images
             img = torch.from_numpy(self.frame.astype(np.float32).transpose(2,0,1)/255)[None,...]
-            img = img.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)            
-            self.xout = model([img, self.xout[1]])
+            img = img.to(device=self.device, dtype=torch.float32, memory_format=torch.channels_last)            
+            self.xout = self.model([img, self.xout[1]])
             heatmap = self.xout[0]            
             detections = self.peaks.peak_coords( heatmap )
             self.peak_vals = self.peaks.heatmap_vals( heatmap, detections )[0][0].cpu().numpy()
@@ -162,6 +170,24 @@ class PlotVideo:
             self.frame = None
             self.peak_vals = None
             self.imcoords = None
+
+    def compare(self):
+        if not self.compare_annotations is None:
+            prev_scores = self.compare_annotations['peak_vals'][np.nonzero(self.compare_annotations['indices']==self.inc)[0]]
+            if prev_scores.size:
+                prev_scores.sort()
+
+            new_scores = self.peak_vals.copy()
+            new_scores.sort()            
+            if len(prev_scores)!=len(new_scores):
+                print(f'Prev scores vs new: {prev_scores} vs. {new_scores}')
+            elif len(prev_scores)>0:
+                diff = np.abs(np.array(prev_scores) - new_scores).sum()
+                if diff>0.01:
+                    print(f'Prev scores vs new: {prev_scores} vs. {new_scores}')
+                else:
+                    print(f'{self.inc}: {len(prev_scores)} detections agree with loaded values')
+
 
     def plot(self):        
         if self.frame is None:
@@ -172,7 +198,7 @@ class PlotVideo:
         
     def init_fig(self, figsize):
         if self.fig is None:
-            self.fig = plt.figure(num='Image', figsize=figsize )
+            self.fig = plt.figure(num=self.figname, figsize=figsize )
             if self.out_name is None:
                 self.fig.canvas.mpl_connect('button_press_event',self.onclick)
 
@@ -183,6 +209,7 @@ class PlotVideo:
         # item = "image" if event.button==1 else "group"
         if event.button==1:
             self.get_next()
+            self.compare()
             self.plot()
         else:
             self.next_video = False
@@ -212,67 +239,19 @@ class PlotVideo:
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
 
+def are_we_already_done(args, out_dir, prefix):
+    ''' Return True if completed all videos '''
+    if args.compare or args.png or not args.save:
+        return False
+    search = prefix + '*.mp4'
+    for path in Path(args.folder).rglob(search):
+        out_name = os.path.join(out_dir, path.name.replace('.mp4','.json') )
+        if not os.path.exists(out_name):
+            return False
+    return True
+
 @torch.inference_mode()
-def run_model(
-        model,
-        device,
-        params,
-        folder,
-        prefix,
-        do_png,
-        min_val=-0.5,
-        save=False,
-        noplot=False):
-
-    model.eval()
-    peaks = Peaks(1, device, min_val=min_val)  # Do peak finding on CPU
-    print(f'Device: {device}')
-
-    run_dir = os.path.join(os.path.dirname(__file__), params.output_dir, f'{params.run:03d}')
-    out_dir = os.path.join(run_dir,'video')
-    os.makedirs(out_dir, exist_ok=True)
-
-    if do_png:
-        reader = ImageReader(folder, search=prefix+'*.json')
-        pv = PlotVideo(reader, model, peaks)            
-    else:
-        search = prefix + '*.mp4'
-        videos = list(Path(folder).rglob(search))
-        videos.sort()
-
-        print(f'Found {len(videos)} files of type: {search}')
-
-        out_name = None
-        if save:
-            print(f'Storing detections in: {out_dir}')
-        for path in videos:
-            if save:
-                out_name = os.path.join(out_dir, path.name.replace('.mp4','.json') )
-                if os.path.exists(out_name):
-                    print(f'Already completed {Path(out_name).name}')
-                    continue
-            reader = VideoReader(str(path), samples_per_sec=1)
-            pv = PlotVideo(reader, model, peaks, out_name, noplot)
-            if not pv.next_video:
-                break
-        #else:
-        #    for path in videos:
-        #        reader = VideoReader(str(path), samples_per_sec=1)
-        #        pv = PlotVideo(reader, model, peaks)
-        #        if not pv.next_video:
-        #            break
-
-if __name__ == '__main__':
-
-    parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
-    parser.add_argument('run', type=int, help='Run')
-    #parser.add_argument('--vfolder', type=str, default='/mnt/home/dmorris/Data/hens/videos',  help='Folder for videos')    
-    parser.add_argument('--folder', type=str, default='/mnt/home/dmorris/Data/hens/Hens_2021',  help='Folder for videos')    
-    parser.add_argument('--prefix', type=str, default='',  help='search prefix')     
-    parser.add_argument('--png', action='store_true',  help='Read PNGs instead')            
-    parser.add_argument('--save', action='store_true',  help='Save detections')            
-    parser.add_argument('--noplot', action='store_true',  help='No plotting -- only if saving detections')            
-    args = parser.parse_args()
+def run_vid(args, prefix):
 
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -282,9 +261,16 @@ if __name__ == '__main__':
     # Load best checkpoint for current run:
     params.load_opt = 'best'
     params.load_run = None
-    
+    min_val = -0.5
 
-    n_channels = (params.n_previous_images + 1) * 3
+    run_dir = os.path.join(os.path.dirname(__file__), params.output_dir, f'{params.run:03d}')
+    out_dir = os.path.join(run_dir,'video')
+    os.makedirs(out_dir, exist_ok=True)
+
+    if are_we_already_done(args, out_dir, prefix):
+        print(f'Already completed all videos of type: {prefix}*.mp4, so quitting')
+        return True
+
     assert params.target_downscale==4, f'Assumes downscaling by 4'
     model = UNetBlocks(n_channels=3, n_classes=params.classes, max_chans=params.max_chans,
                         pre_merge = params.pre_merge, post_merge = params.post_merge)            
@@ -301,13 +287,79 @@ if __name__ == '__main__':
 
     model.to(device=device)
 
-    run_model(
-            model=model,
-            device=device,
-            params=params,
-            folder=args.folder,
-            prefix=args.prefix,
-            do_png=args.png,
-            save=args.save,
-            noplot=args.noplot)
+    model.eval()
+    peaks = Peaks(1, device, min_val=min_val)  # Do peak finding on CPU
+    print(f'Device: {device}')
+
+
+    if args.compare:
+        reader = VideoReader(args.compare, samples_per_sec=1)
+        compare_name = os.path.join(out_dir, Path(args.compare).name.replace('.mp4','.json') )
+        pv = PlotVideo(reader, model, device, peaks, out_name=None, noplot=args.noplot, figname=f'Cam {prefix}', compare_name=compare_name)
+        return
+
+    if args.png:
+        reader = ImageReader(args.folder, search=prefix+'*.json')
+        pv = PlotVideo(reader, model, peaks)            
+    else:
+        search = prefix + '*.mp4'
+        videos = list(Path(args.folder).rglob(search))
+        videos.sort()
+
+        print(f'Found {len(videos)} files of type: {search}')
+
+        out_name = None
+        if args.save:
+            print(f'Storing detections in: {out_dir}')
+        nskip=0
+        for path in videos:
+            if args.save:
+                out_name = os.path.join(out_dir, path.name.replace('.mp4','.json') )
+                if os.path.exists(out_name):
+                    nskip += 1
+                    continue                
+            if nskip:
+                print(f'Skipping {nskip} completed videos')
+                nskip=0
+            reader = VideoReader(str(path), samples_per_sec=1)
+
+            pv = PlotVideo(reader, model, device, peaks, out_name, args.noplot, figname=f'Cam {prefix}')
+            if not pv.next_video:
+                break
+
+
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
+    parser.add_argument('run', type=int, help='Run')
+    parser.add_argument('--folder', type=str, default='/mnt/home/dmorris/Data/hens/Hens_2021',  help='Folder for videos')    
+    parser.add_argument('--prefix', type=str, nargs='+', default='',  help='search prefix')     
+    parser.add_argument('--png', action='store_true',  help='Read PNGs instead')            
+    parser.add_argument('--save', action='store_true',  help='Save detections')            
+    parser.add_argument('--noplot', action='store_true',  help='No plotting -- only if saving detections')            
+    parser.add_argument('--compare', type=str, default='',  help='MP4 file for comparing to previous run')    
+    args = parser.parse_args()
+
+    # OpenCV maximizes number of threads it uses
+    # For multiple threaded operation avoid using too many:
+    #nt = cv.getNumThreads()
+    #cv.setNumThreads(nt//len(args.prefix))
+
+    if args.noplot:
+        print(f'Running separate threads for prefixes: {args.prefix}')
+        # do multiple threads when not plotting
+        threads = []  # 1 thread per prefix
+        for prefix in args.prefix:
+            threads.append( threading.Thread(target=run_vid, args=(args,prefix)) )
         
+        for t in threads:
+            t.start()
+        
+        for t in threads:
+            t.join()  #wait for all threads to complete
+    else:
+        if len(args.prefix):
+            for prefix in args.prefix:
+                run_vid(args,prefix)
+        else:
+            run_vid(args,'')
