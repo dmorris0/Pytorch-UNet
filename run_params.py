@@ -105,6 +105,8 @@ class Params():
                 self.data_dir = '/mnt/home/dmorris/Data/eggs'
             elif platform.node()=='DM-O':
                 self.data_dir = 'D:/Data/Eggs/data'
+            elif platform.node()=='BAE003':
+                self.data_dir = 'D:/Morris/Eggs'
             else:
                 raise Exception(f"Unknown platform: {platform.node()}")
 
