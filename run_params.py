@@ -665,6 +665,21 @@ def get_run_params(run):
                         dice_every_nth=1,
                         batch_size=8,
                         max_chans=96)
+        elif run==46:
+            params = Params(run, epochs = 10,
+                        comment = 'Masked images',
+                        data_train='Eggs_train_mask_23-03-19.h5', 
+                        data_validation='Eggs_validation_mask_tile_23-03-19.h5', 
+                        data_test='Eggs_validation_mask_large_23-03-19.h5',
+                        load_opt=None,
+                        load_run=None,
+                        n_previous_images=0,
+                        pre_merge = False,
+                        post_merge = False,
+                        focal_loss_ag=(0.8,4.0),                # first 74 frames: (0.75, 4.)       
+                        dice_every_nth=1,
+                        batch_size=8,
+                        max_chans=96)
         else:
             raise Exception(f'Undefined run: {run}')
         return params
