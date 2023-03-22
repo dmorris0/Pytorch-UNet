@@ -666,12 +666,12 @@ def get_run_params(run):
                         batch_size=8,
                         max_chans=96)
         elif run==46:
-            params = Params(run, epochs = 10,
+            params = Params(run, epochs = 80,
                         comment = 'Masked images',
                         data_train='Eggs_train_mask_23-03-19.h5', 
                         data_validation='Eggs_validation_mask_tile_23-03-19.h5', 
                         data_test='Eggs_validation_mask_large_23-03-19.h5',
-                        load_opt=None,
+                        load_opt='last',
                         load_run=None,
                         n_previous_images=0,
                         pre_merge = False,

@@ -256,9 +256,6 @@ if __name__ == '__main__':
         print(80*"=")
         logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-        #if os.name == 'nt':        
-        #    device = torch.device('cpu')  # My windows GPU is very slow
-        #else:
 
         n_channels = (params.n_previous_images + 1) * 3
         assert params.target_downscale==4, f'Assumes downscaling by 4'
