@@ -215,3 +215,84 @@ class UNetBlocks(nn.Module):
             self.merge_output = torch.utils.checkpoint(self.merge_output)
         self.outc = torch.utils.checkpoint(self.outc)
 
+
+class UNetTrack(nn.Module):
+    ''' This takes in heatmap and/or image from previous frame
+    '''
+    def __init__(self, add_prev_im, add_prev_out, n_classes, 
+                 max_chans=64):
+        super(UNetTrack, self).__init__()
+        self.add_prev_im = add_prev_im
+        self.add_prev_out = add_prev_out
+        self.n_channels = 3 
+        if self.add_prev_im:
+            self.n_channels += 3
+        self.n_classes = n_classes
+        self.max_chans = max_chans
+
+        self.inc = (DoubleConv(self.n_channels, 64))        
+        self.down_pre1 = (DownAvg(64, 64))
+        self.down_pre2 = (DownAvg(64, max_chans))
+        if self.add_prev_out:
+            self.add = Add( max_chans )
+        self.down1 = (Down(max_chans, max_chans))
+        self.down2 = (Down(max_chans, max_chans))
+        self.down3 = (Down(max_chans, max_chans))
+        self.down4 = (Down(max_chans, max_chans))
+        self.up1 = (Up(max_chans*2, max_chans, True))
+        self.up2 = (Up(max_chans*2, max_chans, True))
+        self.up3 = (Up(max_chans*2, max_chans, True))
+        self.up4 = (Up(max_chans*2, max_chans, True))
+        self.outc = (OutConv(max_chans, n_classes))
+
+    def forward(self, xlist):
+        x = self.inc(xlist[0])
+        x = self.down_pre1(x)
+        x1 = self.down_pre2(x)
+        if self.add_prev_out:
+            x1 = self.add( x1, xlist[1] )
+        x2 = self.down1(x1)
+        x3 = self.down2(x2)
+        x4 = self.down3(x3)
+        x5 = self.down4(x4)
+        x = self.up1(x5, x4)
+        x = self.up2(x, x3)
+        x = self.up3(x, x2)
+        x = self.up4(x, x1)
+        logits = self.outc(x)
+        return logits
+
+    def apply_to_stack(self, imstack, Nmax=None):
+        Nim=imstack.shape[1]//3
+        if not Nmax is None:
+            N = min(Nim-1,Nmax) if self.add_prev_im else min(Nim,Nmax)
+        else:
+            N = Nim-1 if self.add_prev_im else Nim
+        xout = None    
+        for i in range(N,0,-1):
+            if self.add_prev_im:
+                im_input = [imstack[:,i*3-3:(i+1)*3,...]]
+            else:
+                im_input = [imstack[:,i*3-3:i*3,...]]
+            if self.add_prev_out:
+                im_input.append(xout)
+            xout = self.forward(im_input)
+        return xout
+
+    def use_checkpointing(self):
+        self.inc = torch.utils.checkpoint(self.inc)
+        self.down_pre1 = torch.utils.checkpoint(self.down_pre1)
+        self.down_pre2 = torch.utils.checkpoint(self.down_pre2)
+        if self.add_prev_out:
+            self.add = torch.utils.checkpoint(self.add)
+        self.down1 = torch.utils.checkpoint(self.down1)
+        self.down2 = torch.utils.checkpoint(self.down2)
+        self.down3 = torch.utils.checkpoint(self.down3)
+        self.down4 = torch.utils.checkpoint(self.down4)
+        self.up1 = torch.utils.checkpoint(self.up1)
+        self.up2 = torch.utils.checkpoint(self.up2)
+        self.up3 = torch.utils.checkpoint(self.up3)
+        self.up4 = torch.utils.checkpoint(self.up4)
+        self.outc = torch.utils.checkpoint(self.outc)
+
+

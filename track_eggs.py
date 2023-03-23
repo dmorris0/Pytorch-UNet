@@ -1,20 +1,17 @@
 import os
 import sys
-import torch
 from pathlib import Path
 from tqdm import tqdm
 import numpy as np
 import json
 import argparse
 import cv2 as cv
-import logging
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 from timeit import default_timer as timer
 
 from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
-
 
 from run_params import get_run_params
 
@@ -32,27 +29,47 @@ class egg_track:
         self.x.append(x)
         self.y.append(y)
 
+    def plot(self, ax, color, radius=None):
+        ax.plot(self.x, self.y,linestyle='-',marker='.',color=color)
+        if not radius is None:
+            circ = Circle( [self.x[0],self.y[0]], radius, color=color,  linewidth=2., fill=False)
+            ax.add_patch(circ)
+        ax.text(self.x[-1]+10, self.y[-1],str(len(self.score)), color=color)
+
+def plot_all_tracks(tracks, title=None, radius=None):
+    fig = plt.figure(num='Egg Tracks', figsize=(8,4) )
+    ax = fig.add_subplot(1,1,1)
+    for track in tracks:
+        color = next(ax._get_lines.prop_cycler)['color']
+        track.plot(ax, color, radius)
+    ax.set_xlabel(r'$x$', labelpad=6)            
+    ax.set_ylabel(r'$y$', labelpad=6)            
+    ax.invert_yaxis()
+    ax.axis('equal')
+    ax.set_title(title)
+
+
 def next_frame( egg_detections ):
-    if len(egg_detections.indices)==0:
+    if len(egg_detections['indices'])==0:
         return None, egg_detections
     else:
-        ind = iter(egg_detections.indices)
+        ind = iter(egg_detections['indices'])
         fnum = next(ind)
         n=1
         try:
-            while frame==next(ind):
+            while fnum==next(ind):
                 n += 1
         except StopIteration:
             pass
     frame = {'fnum':fnum,
-             'score':egg_detections.peak_vals[:n],
-             'x':egg_detections.x[:n],
-             'y':egg_detections.y[:n]
+             'scores':egg_detections['peak_vals'][:n],
+             'x':egg_detections['x'][:n],
+             'y':egg_detections['y'][:n]
              }
-    egg_detections.peak_vals = egg_detections.peak_vals[n:]
-    egg_detections.indices = egg_detections.indices[n:]
-    egg_detections.x = egg_detections.x[n:]
-    egg_detections.y = egg_detections.y[n:]
+    egg_detections['peak_vals'] = egg_detections['peak_vals'][n:]
+    egg_detections['indices'] = egg_detections['indices'][n:]
+    egg_detections['x'] = egg_detections['x'][n:]
+    egg_detections['y'] = egg_detections['y'][n:]
     return frame, egg_detections
 
 def kill_old_tracks(tracks_current, fnum, lost_sec):
@@ -68,11 +85,11 @@ def track_eggs( eggs_detections, params, big_value=1e10 ):
     tracks_current = []
     tracks_done = []
     id = 0
-    while len(eggs_detections.indices):
+    while len(eggs_detections['indices']):
         # Get next frame with tracks:
         frame, eggs_detections = next_frame( eggs_detections )
         # Now that we know the frame number, remove old tracks:
-        tracks_current, old = kill_old_tracks(tracks_current, frame.fnum, params.lost_sec)
+        tracks_current, old = kill_old_tracks(tracks_current, frame['fnum'], params.lost_sec)
         tracks_done = tracks_done + old
         if len(tracks_current):
             # Get coordinates of tracked eggs
@@ -87,8 +104,9 @@ def track_eggs( eggs_detections, params, big_value=1e10 ):
             match_dists = all_dists[row_ind, col_ind]   
             good = match_dists <= params.radius
             for row, col in zip(row_ind[good], col_ind[good]):
-                tracks_current[row].add( frame['fnum'], frame['scores'][col], frame['x'][col], frame['y'][col] )         
-            rest = np.arange(len(frame['scores']))[1-good]
+                tracks_current[row].add( frame['fnum'], frame['scores'][col], frame['x'][col], frame['y'][col] )  
+            # Get all detections that don't have good associations to tracks:       
+            rest = [ele for ele in list(range(len(frame['scores']))) if ele not in set(col_ind[good])]
             for nt in rest:
                 tracks_current.append( egg_track(id,frame['fnum'],frame['scores'][nt], frame['x'][nt], frame['y'][nt]))
                 id += 1
@@ -100,25 +118,20 @@ def track_eggs( eggs_detections, params, big_value=1e10 ):
 
 class track_params:
     def __init__(self,
-                  radius = 20,   # radius to match
-                  lost_sec = 20,     # Time to lose a track
+                 run,
+                 radius = 20,   # radius to match
+                 lost_sec = 20,     # Time to lose a track
                  ):
+        self.run = run
         self.radius = radius
         self.lost_sec = lost_sec
 
 
 def track_detections(args, prefix):
 
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    params = track_params(args.run)
 
-    params = get_run_params(args.run)
-    assert params.target_downscale==4, f'Assumes target_downscale is 4'
-    # Load best checkpoint for current run:
-    params.load_opt = 'best'
-    params.load_run = None
-
-    run_dir = os.path.join(os.path.dirname(__file__), params.output_dir, f'{params.run:03d}')
+    run_dir = os.path.join(os.path.dirname(__file__), 'out_eggs', f'{params.run:03d}')
     vid_dir = os.path.join(run_dir,'video')
 
     search = prefix + '*.json'
@@ -138,15 +151,22 @@ def track_detections(args, prefix):
             #            'x': x,
             #            'y': y,
             #          }
-        track_eggs(eggs_detections)
+        tracks_c, tracks_d = track_eggs(eggs_detections, params)
+
+        plot_all_tracks(tracks_c + tracks_d, f'Tracks run: {params.run}, Radius: {params.radius}, Lost {params.lost_sec} (sec)')
+
+        plt.show()
+        #plt.savefig('temp.png')
+        #print('Done')
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
     parser.add_argument('run', type=int, help='Run')
     parser.add_argument('--folder', type=str, default='/mnt/home/dmorris/Data/hens/Hens_2021',  help='Folder for videos')    
-    parser.add_argument('--prefix', type=str, nargs='+', default='',  help='search prefix')     
+    parser.add_argument('--prefix', type=str, nargs='+', default=[''],  help='search prefix')     
     args = parser.parse_args()
+
 
     for prefix in args.prefix:
         track_detections(args, prefix)

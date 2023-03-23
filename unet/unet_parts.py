@@ -103,3 +103,19 @@ class Merge(nn.Module):
         x = torch.cat([x2, x1], dim=1)
         return self.conv(x)
         
+
+class Add(nn.Module):
+    def __init__(self, n_channels):
+        super().__init__()
+        self.conv = nn.Conv2d( 1, n_channels, kernel_size=1, bias=False )
+        self.nonlinear = nn.Sequential(
+            nn.BatchNorm2d(n_channels),
+            nn.ReLU(inplace=True)
+        )
+    
+    def forward(self, x1, x2):
+        if x2 is None:
+            x = self.nonlinear(x1)
+        else:
+            x = self.nonlinear(x1 + self.conv(x2))
+        return x

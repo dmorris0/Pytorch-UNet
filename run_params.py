@@ -43,8 +43,12 @@ class Params():
                  data_validation: str = 'Eggs_validation.h5',
                  data_test: str = '',
                  output_dir: str = 'out_eggs',
+                 model_name: str = 'UNetBlocks',
+                 add_prev_im: bool = False,
+                 add_prev_out: bool = False,
                  n_previous_images: int = 0,
-                 rand_previous: bool = False,  # If true, randomly select 0 to n_previous for each batch
+                 n_previous_min: int = 0,
+                 rand_previous: bool = False,  # If true, randomly select n_previous_min to n_previous_image for each batch
                  epochs: int = 10,
                  dice_every_nth: int = 1,
                  batch_size: int = 4,
@@ -75,7 +79,11 @@ class Params():
         self.data_validation = data_validation
         self.data_test = data_test
         self.output_dir = output_dir
+        self.model_name = model_name
+        self.add_prev_im = add_prev_im
+        self.add_prev_out = add_prev_out
         self.n_previous_images = n_previous_images
+        self.n_previous_min = n_previous_min
         self.rand_previous = rand_previous
         self.epochs = epochs
         self.dice_every_nth = dice_every_nth
@@ -674,6 +682,66 @@ def get_run_params(run):
                         load_opt='last',
                         load_run=None,
                         n_previous_images=0,
+                        pre_merge = False,
+                        post_merge = False,
+                        focal_loss_ag=(0.8,4.0),                # first 74 frames: (0.75, 4.)       
+                        dice_every_nth=1,
+                        batch_size=8,
+                        max_chans=96)
+        elif run==47:
+            params = Params(run, epochs = 120,
+                        comment = 'Prev image + Prev output',
+                        data_train='Eggs_train_23-02-28.h5', 
+                        data_validation='Eggs_validation_tile_23-02-26.h5', 
+                        data_test='Eggs_validation_large_23-02-25.h5',
+                        load_opt='last',
+                        load_run=None,
+                        model_name='UNetTrack',
+                        add_prev_im=True,
+                        add_prev_out=True,
+                        n_previous_images=3,
+                        n_previous_min=0,
+                        rand_previous=True,
+                        pre_merge = False,
+                        post_merge = False,
+                        focal_loss_ag=(0.8,4.0),                # first 74 frames: (0.75, 4.)       
+                        dice_every_nth=1,
+                        batch_size=8,
+                        max_chans=96)
+        elif run==48:
+            params = Params(run, epochs = 120,
+                        comment = 'Prev output',
+                        data_train='Eggs_train_23-02-28.h5', 
+                        data_validation='Eggs_validation_tile_23-02-26.h5', 
+                        data_test='Eggs_validation_large_23-02-25.h5',
+                        load_opt='last',
+                        load_run=None,
+                        model_name='UNetTrack',
+                        add_prev_im=False,
+                        add_prev_out=True,
+                        n_previous_images=2,
+                        n_previous_min=0,
+                        rand_previous=True,
+                        pre_merge = False,
+                        post_merge = False,
+                        focal_loss_ag=(0.8,4.0),                # first 74 frames: (0.75, 4.)       
+                        dice_every_nth=1,
+                        batch_size=8,
+                        max_chans=96)
+        elif run==49:
+            params = Params(run, epochs = 120,
+                        comment = 'Prev Image',
+                        data_train='Eggs_train_23-02-28.h5', 
+                        data_validation='Eggs_validation_tile_23-02-26.h5', 
+                        data_test='Eggs_validation_large_23-02-25.h5',
+                        load_opt='last',
+                        load_run=None,
+                        model_name='UNetTrack',
+                        add_prev_im=True,
+                        add_prev_out=False,
+                        n_previous_images=1,
+                        n_previous_min=0,
+                        rand_previous=False,
                         pre_merge = False,
                         post_merge = False,
                         focal_loss_ag=(0.8,4.0),                # first 74 frames: (0.75, 4.)       

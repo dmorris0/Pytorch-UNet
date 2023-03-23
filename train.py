@@ -19,7 +19,7 @@ import shutil
 
 #import wandb
 from evaluate_bce import evaluate_bce
-from unet import UNet, UNetSmall, UNetSmallQuarter,  UNetBlocks
+from unet import UNet, UNetSmall, UNetSmallQuarter,  UNetBlocks, UNetTrack
 from plot_data import save_scores, read_scores, plot_scores
 from run_params import get_run_params, get_run_dirs, find_checkpoint
 
@@ -103,6 +103,8 @@ def train_model( model, device, params, epoch):
 
     logging.info(f'''Starting training:
         Run:              {params.run}
+        UNet:             {params.model_name}
+        Comment:          {params.comment}
         Start epoch:      {epoch+1}
         Load-opt:         {params.load_opt}
         Load-run:         {params.load_run}
@@ -110,6 +112,8 @@ def train_model( model, device, params, epoch):
         Max Channels:     {params.max_chans}   
         Batch size:       {params.batch_size}
         N Prev Images     {params.n_previous_images}
+        Add prev image    {params.add_prev_im}
+        Add prev out      {params.add_prev_out}
         Pre-Merge:        {params.pre_merge}
         Post-Merge:       {params.post_merge}
         Learning rate:    {params.lr}
@@ -141,7 +145,8 @@ def train_model( model, device, params, epoch):
 
                 images = images.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
                 true_masks = true_masks.to(device=device, dtype=float)  # BCE requires float
-                n_max = np.random.randint(params.n_previous_images+1) + 1 if params.n_previous_images and params.rand_previous else params.n_previous_images+1
+                n_max = np.random.randint(params.n_previous_images-params.n_previous_min+1) + 1 + params.n_previous_min \
+                     if params.n_previous_images and params.rand_previous else params.n_previous_images+1
 
                 with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=params.amp):
 
@@ -256,11 +261,14 @@ if __name__ == '__main__':
         print(80*"=")
         logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
-        n_channels = (params.n_previous_images + 1) * 3
         assert params.target_downscale==4, f'Assumes downscaling by 4'
-        model = UNetBlocks(n_channels=3, n_classes=params.classes, max_chans=params.max_chans,
-                               pre_merge = params.pre_merge, post_merge = params.post_merge)            
+
+        if params.model_name=='UNetBlocks':
+            model = UNetBlocks(n_channels=3, n_classes=params.classes, max_chans=params.max_chans,
+                                pre_merge = params.pre_merge, post_merge = params.post_merge)            
+        elif params.model_name=='UNetTrack':
+            model = UNetTrack(add_prev_im=params.add_prev_im, add_prev_out=params.add_prev_out,
+                              n_classes=params.classes, max_chans=params.max_chans)
 
         model = model.to(memory_format=torch.channels_last)
 
