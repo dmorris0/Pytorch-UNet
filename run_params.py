@@ -748,6 +748,26 @@ def get_run_params(run):
                         dice_every_nth=1,
                         batch_size=8,
                         max_chans=96)
+        elif run==50:
+            params = Params(run, epochs = 120,
+                        comment = 'Single Image Detector',
+                        data_train='Eggs_train_23-03-24.h5', 
+                        data_validation='Eggs_validation_tile_23-03-24.h5', 
+                        data_test='Eggs_test_large_23-03-24.h5',
+                        load_opt='last',
+                        load_run=None,
+                        model_name='UNetTrack',
+                        add_prev_im=False,
+                        add_prev_out=False,
+                        n_previous_images=0,
+                        n_previous_min=0,
+                        rand_previous=False,
+                        pre_merge = False,
+                        post_merge = False,
+                        focal_loss_ag=(0.8,4.0),                # first 74 frames: (0.75, 4.)       
+                        dice_every_nth=1,
+                        batch_size=12,
+                        max_chans=96)
         else:
             raise Exception(f'Undefined run: {run}')
         return params
