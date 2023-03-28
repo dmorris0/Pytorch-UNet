@@ -5,11 +5,12 @@ import torch.nn.functional as F
 from tqdm import tqdm
 import numpy as np
 import h5py, json
-import sys
-sys.path.append('../cvdemos/image')
+from timeit import default_timer as timer
+import sys, os
+image_path = os.path.join( os.path.dirname(os.path.dirname(__file__)), 'cvdemos', 'image') 
+sys.path.append(image_path)
 from heatmap_score import Peaks, MatchScore
 from image_dataset import up_scale_coords
-from timeit import default_timer as timer
 from run_params import get_run_params
 
 # from utils.dice_score import multiclass_dice_coeff, dice_coeff
@@ -83,11 +84,11 @@ def evaluate_bce(net, dataloader, device, criterion, params, epoch, step, h5file
     min_val = 0.
     matches = MatchScore(max_distance = params.max_distance)
     save = None    
-    Nb = len(dataloader)
+    Nb = np.ceil( len(dataloader) / max(1, params.testoutfrac) ).astype(int)
 
     # iterate over the validation set
     with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=params.amp):
-        for batch in tqdm(dataloader, total=num_val_batches, desc='Validation round', unit='batch', leave=False):
+        for i,batch in enumerate(tqdm(dataloader, total=num_val_batches, desc='Validation round', unit='batch', leave=False)):
             image, mask_true, centers, ncen = batch['image'], batch['targets'], batch['centers'], batch['ncen']
 
             # move images and labels to correct device and type
@@ -98,17 +99,23 @@ def evaluate_bce(net, dataloader, device, criterion, params, epoch, step, h5file
 
             # predict the mask
             mask_pred = net.apply_to_stack(image, n_max)
+            for j in range(params.testrepeat):
+                mask_pred = mask_pred + net.apply_to_stack(image[:,(j+1)*3:(j+1)*3+3], n_max)
 
             if epoch % params.dice_every_nth == 0:
-                detections = peaks.peak_coords( mask_pred)
+                detections = peaks.peak_coords( mask_pred )                
+                if params.do_nms:
+                    detect_vals = peaks.heatmap_vals( mask_pred, detections )
+                    detections, _ = peaks.nms( detections, detect_vals, params.max_distance / params.target_downscale, to_torch=True )
                 bscores,_,_ = matches.calc_match_scores( up_scale_coords( detections, params.target_downscale ), centers, ncen )
             else:
                 bscores = np.nan*np.ones((params.batch_size,3))
 
             if not h5filename is None:
-                if save is None:
-                    save = SaveResults(h5filename=h5filename, batch=batch, Nb=Nb, step=step)
-                save.add( image, centers, ncen, mask_pred, bscores, min_val, params.max_distance, params.target_downscale )
+                if params.testoutfrac and i % params.testoutfrac==0:
+                    if save is None:
+                        save = SaveResults(h5filename=h5filename, batch=batch, Nb=Nb, step=step)
+                    save.add( image, centers, ncen, mask_pred, bscores, min_val, params.max_distance, params.target_downscale )
 
             scores += bscores.sum(axis=0)
 

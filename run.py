@@ -16,7 +16,7 @@ import json
 import argparse
 
 from evaluate_bce import evaluate_bce
-from unet import UNetBlocks
+from unet import UNetBlocks, UNetTrack
 from plot_data import save_scores, plot_scores
 
 dirname = os.path.dirname(__file__)
@@ -34,10 +34,12 @@ def run_model(
         params):
 
     test_set = ImageData(os.path.join(params.data_dir, params.data_test),'test', 
-                            radius=params.dilate, target_downscale=params.target_downscale, rand_flip=False)
+                            radius=params.dilate, target_downscale=params.target_downscale, rand_flip=False,
+                            n_previous_images = max(params.testrepeat, params.n_previous_images) )
     if len(test_set)== 0:
         test_set = ImageData(os.path.join(params.data_dir, params.data_test),'validation', 
-                            radius=params.dilate, target_downscale=params.target_downscale, rand_flip=False)
+                            radius=params.dilate, target_downscale=params.target_downscale, rand_flip=False,
+                            n_previous_images = max(params.testrepeat, params.n_previous_images) )
     n_test = len(test_set)
     if n_test==0:
         raise Exception('No data in test set')
@@ -68,8 +70,9 @@ def run_model(
     save_scores(os.path.join(dir_run, "test_scores.csv"), testscores)
 
     print(f'To see plots again run: python plot_data.py {params.run} --test')
-    dd = DrawData(outname)
-    dd.plot()
+    if params.testoutfrac:
+        dd = DrawData(outname, recalc_scores=True, do_nms = params.do_nms)
+        dd.plot()
 
 if __name__ == '__main__':
 
@@ -88,9 +91,12 @@ if __name__ == '__main__':
         else:
             device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-        n_channels = (params.n_previous_images + 1) * 3
-        model = UNetBlocks(n_channels=3, n_classes=params.classes, max_chans=params.max_chans,
-                        pre_merge = params.pre_merge, post_merge = params.post_merge)   
+        if params.model_name=='UNetBlocks':
+            model = UNetBlocks(n_channels=3, n_classes=params.classes, max_chans=params.max_chans,
+                                pre_merge = params.pre_merge, post_merge = params.post_merge)            
+        elif params.model_name=='UNetTrack':
+            model = UNetTrack(add_prev_im=params.add_prev_im, add_prev_out=params.add_prev_out,
+                              n_classes=params.classes, max_chans=params.max_chans)
         model = model.to(memory_format=torch.channels_last)
 
         cpoint, epoch = find_checkpoint(params)

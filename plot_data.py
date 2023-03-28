@@ -111,6 +111,7 @@ if __name__=="__main__":
     parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
     parser.add_argument('run', type=int,  help='Run number')
     parser.add_argument('--test', action='store_true', help="Plot test run")
+    parser.add_argument('--skiptp', action='store_true', help="Skip images with only True Positives")
 
 
     args = parser.parse_args()
@@ -151,8 +152,11 @@ if __name__=="__main__":
         print('='*80)
 
         outname = os.path.join(dir_run,'test',f'output.h5')
-        dd = DrawData(outname, recalc_scores=True)
-        dd.plot()
+        if os.path.exists(outname):
+            dd = DrawData(outname, recalc_scores=True, do_nms = params.do_nms, skiptp = args.skiptp)
+            dd.plot()
+        else:
+            plt.show()
 
     if False:
         if args.test:

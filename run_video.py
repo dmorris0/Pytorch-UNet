@@ -14,12 +14,12 @@ import threading
 from timeit import default_timer as timer
 import time
 
-from unet import UNetBlocks
+from unet import UNetBlocks, UNetTrack
 
 dirname = os.path.dirname(__file__)
 dataset_path = os.path.join( os.path.dirname(dirname), 'cvdemos', 'image')
 sys.path.append(dataset_path)
-from heatmap_score import Peaks
+from heatmap_score import Peaks, MatchScore
 from synth_data import DrawData
 from image_dataset import up_scale_coords
 
@@ -47,7 +47,7 @@ class VideoReader:
             for _ in range(self.skip-1):
                 _ = self.cap.read()
             self.index += self.skip
-        return ret, frame, frame_no
+        return ret, frame, frame_no, None
 
     def __del__(self):
         if not self.cap is None:
@@ -65,8 +65,9 @@ def get_image_name(im_folder, json_name):
 
 class ImageReader:
     def __init__(self, im_folder, search='*.json'):
-        self.im_list = [get_image_name(im_folder, x.name) for x in Path(im_folder).glob(search)]
-        self.im_list.sort()
+        self.json_list = list(Path(im_folder).glob(search))
+        self.json_list.sort()
+        self.im_list = [get_image_name(im_folder, x.name) for x in self.json_list]
         self.nsamp = len(self.im_list)
         self.index = -1
         self.name = im_folder
@@ -75,18 +76,104 @@ class ImageReader:
         self.index += 1
         if self.index < self.nsamp:
             frame = cv.imread(self.im_list[self.index])
-            return True, frame, Path(self.im_list[self.index]).name
+            with open(self.json_list[self.index]) as f:
+                annotation = json.load(f)
+            return True, frame, Path(self.im_list[self.index]).name, annotation
         else:
-            return False, None, None
+            return False, None, None, None
+
+class RunDetections:
+    
+    def __init__(self,
+                 reader, 
+                 model, 
+                 device, 
+                 peaks, 
+                 nms_proximity,
+                 radius=12,
+                 out_name=None ):
+        self.reader = reader
+        self.model = model
+        self.device = device
+        self.peaks = peaks
+        self.proximity = nms_proximity
+        self.matches = MatchScore(max_distance = radius)
+        self.out_name = out_name
+        self.nmisses = 0
+        self.n = 0
+        self.all_annotations = {'images':{},
+                                'nmisses':[]}
+        self.run()
+
+    def run(self): 
+        print(f'Running on {len(self.reader.im_list)} annotated images')
+        while self.next():
+            pass
+        print(f'Found {self.nmisses} misses')
+        print(f'Saving to: {self.out_name}')
+        with open(self.out_name,'w') as f:
+            json.dump(self.all_annotations,f, indent=2)
+
+    def next(self): 
+        ret, frame, name, annotations = self.reader.get_next()
+        if ret:
+            self.frame = cv.cvtColor(frame, cv.COLOR_BGR2RGB)  # Trained on RGB images
+            img = torch.from_numpy(self.frame.astype(np.float32).transpose(2,0,1)/255)[None,...]
+            img = img.to(device=self.device, dtype=torch.float32, memory_format=torch.channels_last)   
+            
+            xout = self.model.apply_to_stack(img, Nmax=1)
+            heatmap = xout[0]            
+            scale = img.shape[-1]/heatmap.shape[-1]
+
+            detections = self.peaks.peak_coords( heatmap )
+            peak_vals = self.peaks.heatmap_vals( heatmap, detections )
+            if self.proximity > 0:
+                detections, peak_vals = self.peaks.nms(detections, peak_vals, self.proximity / scale, to_torch=True)
+            peak_vals = peak_vals[0][0].cpu().numpy()
+            imcoords = up_scale_coords( detections[0][0].cpu().numpy(), scale )      
+
+            if imcoords.size==0:
+                tp_inds = np.array([])
+            else:
+                _,tp_inds,_ = self.matches.calc_match_scores( imcoords, np.array(annotations['targets']))
+            if tp_inds.size:
+                tp = np.zeros( (imcoords.shape[0],), dtype=bool)
+                tp[tp_inds]=True
+                misses = np.logical_not(tp).astype(np.int32).tolist()
+                nmisses = sum(misses)
+            else:
+                misses = []
+                nmisses = 0
+            self.all_annotations['images'][name]={"targets":imcoords.tolist(), "misses":misses}
+            self.all_annotations['nmisses'].append(nmisses)
+            self.nmisses += nmisses   
+            nsofar = len(self.all_annotations['nmisses'])
+            if nsofar % 10 == 0:
+                print('.',end='')
+                if nsofar % 800 == 0:
+                    print(f'{nsofar}')
+        return ret
 
 class PlotVideo:
 
-    def __init__(self, reader, model, device, peaks, out_name=None, noplot=False, radius=12, figname='Camera', compare_name=None):
+    def __init__(self, 
+                 reader, 
+                 model, 
+                 device, 
+                 peaks, 
+                 out_name=None, 
+                 noplot=False, 
+                 radius=12, 
+                 figname='Camera', 
+                 compare_name=None,
+                 nms_proximity=0):
 
         self.reader = reader
         self.model = model
         self.device = device
         self.peaks = peaks
+        self.proximity = nms_proximity
+        self.matches = MatchScore(max_distance = radius)
         print(f'Running on {self.reader.nsamp} frames from {reader.name}')
 
         self.name = Path(reader.name).name
@@ -96,6 +183,7 @@ class PlotVideo:
         self.xout = [None, None]
         self.inc = -1
         self.next_video = True
+        self.annotations = None
 
         if compare_name is None:
             self.compare_annotations = None
@@ -155,17 +243,32 @@ class PlotVideo:
             
 
     def get_next(self):
-        ret, frame, _ = self.reader.get_next()
+        ret, frame, _, self.annotations = self.reader.get_next()
         self.inc += 1
         if ret:
             self.frame = cv.cvtColor(frame, cv.COLOR_BGR2RGB)  # Trained on RGB images
             img = torch.from_numpy(self.frame.astype(np.float32).transpose(2,0,1)/255)[None,...]
-            img = img.to(device=self.device, dtype=torch.float32, memory_format=torch.channels_last)            
-            self.xout = self.model([img, self.xout[1]])
+            img = img.to(device=self.device, dtype=torch.float32, memory_format=torch.channels_last)   
+            
+            self.xout = self.model.apply_to_stack(img, Nmax=1)
+            scale = img.shape[-1]/self.xout.shape[-1]
+
             heatmap = self.xout[0]            
             detections = self.peaks.peak_coords( heatmap )
-            self.peak_vals = self.peaks.heatmap_vals( heatmap, detections )[0][0].cpu().numpy()
-            self.imcoords = up_scale_coords( detections[0][0].cpu().numpy(), frame.shape[0]/heatmap.shape[2] )            
+            peak_vals = self.peaks.heatmap_vals( heatmap, detections )
+            if self.proximity > 0:
+                detections, peak_vals = self.peaks.nms(detections, peak_vals, self.proximity / scale, to_torch=True)
+            self.peak_vals = peak_vals[0][0].cpu().numpy()
+            self.imcoords = up_scale_coords( detections[0][0].cpu().numpy(), scale )      
+
+            if self.annotations is None:
+                self.tp_inds = None
+            else:
+                if self.imcoords.size==0:
+                    self.tp_inds = np.array([])
+                else:
+                    _,self.tp_inds,_ = self.matches.calc_match_scores( self.imcoords, np.array(self.annotations['targets']))
+
         else:
             self.frame = None
             self.peak_vals = None
@@ -194,7 +297,7 @@ class PlotVideo:
             plt.close(self.fig)
             print('Done video')
         else:
-            self.plot_detections(self.frame, self.imcoords, self.peak_vals, name=self.name)
+            self.plot_detections() 
         
     def init_fig(self, figsize):
         if self.fig is None:
@@ -226,16 +329,23 @@ class PlotVideo:
                 circ = Circle( xy, radius, color=color,  linewidth=2., fill=False)
                 ax.add_patch(circ)
 
-    def plot_detections(self, img, targets, peak_vals, name=None):
+    def plot_detections(self):
+        #, img, targets, peak_vals, annotations=None, name=None):
+        #self.frame, self.imcoords, self.peak_vals, self.annotations, name=self.name)
         self.init_fig( (6,6) )
         self.fig.clf()
         ax = self.fig.add_subplot(1, 1, 1)
-        ax.imshow(img, vmin=0, vmax=255, cmap="gray")
-        if len(peak_vals)>0:
-            self.draw_targets(ax, targets[peak_vals<0], self.radius, color=(.2,.5,1.))
-            self.draw_targets(ax, targets[peak_vals>=0], self.radius, color=(1.,.5,.2))
-        name = self.name if name is None else name
-        ax.set_title(f'{name}: {self.inc}, N det: {targets.shape[0]}')
+        ax.imshow(self.frame)
+        if not self.annotations is None:
+            self.draw_targets(ax, self.annotations["targets"], self.radius*2, color=(1,1,1))
+        if len(self.peak_vals)>0:
+            tp = np.zeros( (self.imcoords.shape[0],), dtype=bool)
+            tp[self.tp_inds]=True
+            self.draw_targets(ax, self.imcoords[tp], self.radius, color=(.2,.5,1.))
+            self.draw_targets(ax, self.imcoords[np.logical_not(tp)], self.radius, color=(1.,.5,.2))
+            #self.draw_targets(ax, self.imcoords[self.peak_vals<0], self.radius, color=(.2,.5,1.))
+            #self.draw_targets(ax, self.imcoords[self.peak_vals>=0], self.radius, color=(1.,.5,.2))
+        ax.set_title(f'{self.name}: {self.inc}, N det: {self.imcoords.shape[0]}')
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
 
@@ -261,7 +371,7 @@ def run_vid(args, prefix):
     # Load best checkpoint for current run:
     params.load_opt = 'best'
     params.load_run = None
-    min_val = -0.5
+    min_val = 0 # -0.5
 
     run_dir = os.path.join(os.path.dirname(__file__), params.output_dir, f'{params.run:03d}')
     out_dir = os.path.join(run_dir,'video')
@@ -271,9 +381,12 @@ def run_vid(args, prefix):
         print(f'Already completed all videos of type: {prefix}*.mp4, so quitting')
         return True
 
-    assert params.target_downscale==4, f'Assumes downscaling by 4'
-    model = UNetBlocks(n_channels=3, n_classes=params.classes, max_chans=params.max_chans,
-                        pre_merge = params.pre_merge, post_merge = params.post_merge)            
+    if params.model_name=='UNetBlocks':
+        model = UNetBlocks(n_channels=3, n_classes=params.classes, max_chans=params.max_chans,
+                           pre_merge = params.pre_merge, post_merge = params.post_merge)            
+    elif params.model_name=='UNetTrack':
+        model = UNetTrack(add_prev_im=params.add_prev_im, add_prev_out=params.add_prev_out,
+                          n_classes=params.classes, max_chans=params.max_chans)
 
     model = model.to(memory_format=torch.channels_last)
 
@@ -300,7 +413,10 @@ def run_vid(args, prefix):
 
     if args.png:
         reader = ImageReader(args.folder, search=prefix+'*.json')
-        pv = PlotVideo(reader, model, peaks)            
+        if args.save:
+            pv = RunDetections(reader, model, device, peaks, nms_proximity=args.nms, out_name = os.path.join(run_dir, "image_detections.json") )
+        else:
+            pv = PlotVideo(reader, model, device, peaks, nms_proximity=args.nms)            
     else:
         search = prefix + '*.mp4'
         videos = list(Path(args.folder).rglob(search))
@@ -323,7 +439,7 @@ def run_vid(args, prefix):
                 nskip=0
             reader = VideoReader(str(path), samples_per_sec=1)
 
-            pv = PlotVideo(reader, model, device, peaks, out_name, args.noplot, figname=f'Cam {prefix}')
+            pv = PlotVideo(reader, model, device, peaks, out_name, args.noplot, figname=f'Cam {prefix}', nms_proximity=args.nms)
             if not pv.next_video:
                 break
 
@@ -331,13 +447,16 @@ def run_vid(args, prefix):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
-    parser.add_argument('run', type=int, help='Run')
-    parser.add_argument('--folder', type=str, default='/mnt/home/dmorris/Data/hens/Hens_2021',  help='Folder for videos')    
+    parser.add_argument('run', type=int, help='Run')    
+    parser.add_argument('--folder', type=str, default='/mnt/research/3D_Vision_Lab/Hens/ImagesJPG',  help='Folder for videos')    
+    #parser.add_argument('--folder', type=str, default='/mnt/home/dmorris/Data/hens/Hens_2021',  help='Folder for videos')    
     parser.add_argument('--prefix', type=str, nargs='+', default='',  help='search prefix')     
-    parser.add_argument('--png', action='store_true',  help='Read PNGs instead')            
-    parser.add_argument('--save', action='store_true',  help='Save detections')            
+    parser.add_argument('--png', action='store_true',  help='Read JPGs or PNGs instead')            
+    parser.add_argument('--savefile', type=str, default='',  help='Write detections')    
     parser.add_argument('--noplot', action='store_true',  help='No plotting -- only if saving detections')            
     parser.add_argument('--compare', type=str, default='',  help='MP4 file for comparing to previous run')    
+    parser.add_argument('--nms', type=float, default=12.,  help='Do NMS for 12 pixels')      
+    parser.add_argument('--save', action='store_true',  help='Save detections')            
     args = parser.parse_args()
 
     # OpenCV maximizes number of threads it uses

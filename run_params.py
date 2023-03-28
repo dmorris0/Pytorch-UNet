@@ -44,6 +44,9 @@ class Params():
                  data_test: str = '',
                  output_dir: str = 'out_eggs',
                  model_name: str = 'UNetBlocks',
+                 do_nms: bool = False,
+                 testrepeat: int = 0,
+                 testoutfrac: int = 0,
                  add_prev_im: bool = False,
                  add_prev_out: bool = False,
                  n_previous_images: int = 0,
@@ -80,6 +83,9 @@ class Params():
         self.data_test = data_test
         self.output_dir = output_dir
         self.model_name = model_name
+        self.do_nms = do_nms
+        self.testrepeat = testrepeat
+        self.testoutfrac = testoutfrac
         self.add_prev_im = add_prev_im
         self.add_prev_out = add_prev_out
         self.n_previous_images = n_previous_images
@@ -757,6 +763,9 @@ def get_run_params(run):
                         load_opt='last',
                         load_run=None,
                         model_name='UNetTrack',
+                        do_nms = True,
+                        testrepeat=0,
+                        testoutfrac=0,
                         add_prev_im=False,
                         add_prev_out=False,
                         n_previous_images=0,
@@ -765,6 +774,29 @@ def get_run_params(run):
                         pre_merge = False,
                         post_merge = False,
                         focal_loss_ag=(0.8,4.0),                # first 74 frames: (0.75, 4.)       
+                        dice_every_nth=1,
+                        batch_size=12,
+                        max_chans=96)
+        elif run==51:
+            params = Params(run, epochs = 120,
+                        comment = 'Repeat run 24 with training data 02-24',
+                        data_train='Eggs_train_23-02-24.h5', 
+                        data_validation='Eggs_validation_tile_23-03-24.h5', 
+                        data_test='Eggs_test_large_23-03-24.h5',
+                        load_opt='last',
+                        load_run=None,
+                        model_name='UNetTrack',
+                        do_nms = True,
+                        testrepeat=0,
+                        testoutfrac=1,
+                        add_prev_im=False,
+                        add_prev_out=False,
+                        n_previous_images=0,
+                        n_previous_min=0,
+                        rand_previous=False,
+                        pre_merge = False,
+                        post_merge = False,
+                        focal_loss_ag=(0.85,4.0),                # first 74 frames: (0.75, 4.)       
                         dice_every_nth=1,
                         batch_size=12,
                         max_chans=96)
