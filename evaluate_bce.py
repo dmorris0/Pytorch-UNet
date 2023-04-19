@@ -86,11 +86,14 @@ def evaluate_bce(net, dataloader, device, criterion, params, epoch, step, h5file
     save = None    
     Nb = np.ceil( len(dataloader) / max(1, params.testoutfrac) ).astype(int)
 
+    model_time = 0
+    nruns = 0
     # iterate over the validation set
     with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=params.amp):
         for i,batch in enumerate(tqdm(dataloader, total=num_val_batches, desc='Validation round', unit='batch', leave=False)):
             image, mask_true, centers, ncen = batch['image'], batch['targets'], batch['centers'], batch['ncen']
 
+            start_time = timer()
             # move images and labels to correct device and type
             image = image.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
             # mask_true = mask_true.to(device=device, dtype=torch.long)
@@ -101,6 +104,8 @@ def evaluate_bce(net, dataloader, device, criterion, params, epoch, step, h5file
             mask_pred = net.apply_to_stack(image, n_max)
             for j in range(params.testrepeat):
                 mask_pred = mask_pred + net.apply_to_stack(image[:,(j+1)*3:(j+1)*3+3], n_max)
+            model_time += timer() - start_time
+            nruns += 1
 
             if epoch % params.dice_every_nth == 0:
                 detections = peaks.peak_coords( mask_pred )                
@@ -114,6 +119,7 @@ def evaluate_bce(net, dataloader, device, criterion, params, epoch, step, h5file
             if not h5filename is None:
                 if params.testoutfrac and i % params.testoutfrac==0:
                     if save is None:
+                        print(f'Saving raw output to {h5filename}')
                         save = SaveResults(h5filename=h5filename, batch=batch, Nb=Nb, step=step)
                     save.add( image, centers, ncen, mask_pred, bscores, min_val, params.max_distance, params.target_downscale )
 
@@ -122,6 +128,8 @@ def evaluate_bce(net, dataloader, device, criterion, params, epoch, step, h5file
             assert mask_true.min() >= 0 and mask_true.max() <= 1, 'True mask indices should be in [0, 1]'
 
             bce += criterion(mask_pred, mask_true)
+
+    print(f'Time per batch: {model_time / nruns:.4f} sec')
 
     net.train()
 

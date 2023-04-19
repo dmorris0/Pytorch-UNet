@@ -1,3 +1,6 @@
+''' Run trained model on test data
+    Can use plot_data.py to plot the output detections and heatmaps (use --outfrac to output results to .h5 file)
+'''
 import os
 import sys
 import torch
@@ -78,13 +81,17 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
     parser.add_argument('runlist', type=int, nargs='+',  help='List of runs')
+    parser.add_argument('--outfrac', type=float, default=None,  help='Fraction of images to save, None: use input params')
+    
     args = parser.parse_args()
 
     for run in args.runlist:
 
-        params = get_run_params(run)
+        params = get_run_params(run)        
         params.load_opt = 'best'
         params.load_run = None
+        if not args.outfrac is None:
+            params.testoutfrac = args.outfrac
         print(80*"=")
         if os.name == 'nt':        
             device = torch.device('cpu')  # My windows GPU is very slow

@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 import threading
 from timeit import default_timer as timer
+from filelock import Timeout, SoftFileLock
 import time
 
 from unet import UNetBlocks, UNetTrack
@@ -29,7 +30,7 @@ class VideoReader:
     def __init__(self, filename, samples_per_sec):
         self.name = filename
         self.cap = cv.VideoCapture(filename)
-        self.samples_per_sec = samples_per_sec   
+        self.samples_per_sec = samples_per_sec   # if this is 2, then next frame is every 1/2 second
         self.fps = int(self.cap.get(cv.CAP_PROP_FPS))
         self.skip = self.fps // self.samples_per_sec
         self.nsamp = int(self.cap.get(cv.CAP_PROP_FRAME_COUNT)) // self.skip        
@@ -38,7 +39,7 @@ class VideoReader:
     def get_next(self):
         ret, frame = self.cap.read()
         self.index += 1
-        frame_no = self.index * 30
+        frame_no = self.index * 30 // self.skip
         if ret:
             imsize = frame.shape
             if imsize[0] > 1200:
@@ -49,6 +50,14 @@ class VideoReader:
             self.index += self.skip
         return ret, frame, frame_no, None
 
+    def get_nth(self, nth):
+        self.index = nth*self.skip-1
+        self.cap.set(cv.CAP_PROP_POS_FRAMES,nth*self.skip-1)
+        return self.get_next()
+    
+    def __len__(self):
+        return self.nsamp
+    
     def __del__(self):
         if not self.cap is None:
             self.cap.release()
@@ -71,6 +80,9 @@ class ImageReader:
         self.nsamp = len(self.im_list)
         self.index = -1
         self.name = im_folder
+
+    def __len__(self):
+        return self.nsamp
 
     def get_next(self):
         self.index += 1
@@ -106,7 +118,7 @@ class RunDetections:
         self.run()
 
     def run(self): 
-        print(f'Running on {len(self.reader.im_list)} annotated images')
+        print(f'Running on {len(self.reader)} annotated images')
         while self.next():
             pass
         print(f'Found {self.nmisses} misses')
@@ -174,7 +186,6 @@ class PlotVideo:
         self.peaks = peaks
         self.proximity = nms_proximity
         self.matches = MatchScore(max_distance = radius)
-        print(f'Running on {self.reader.nsamp} frames from {reader.name}')
 
         self.name = Path(reader.name).name
         self.figname = figname
@@ -237,7 +248,8 @@ class PlotVideo:
                         'x': x,
                         'y': y,
                       }
-        print(f'  Detections: {(np.array(peak_vals)>0).sum()} > 0, {(np.array(peak_vals)<0).sum()} <= 0 --> {Path(self.out_name).name}.  Done in {total_time/60:.1} min')        
+        #print(f'  Detections: {(np.array(peak_vals)>0).sum()} > 0, {(np.array(peak_vals)<0).sum()} <= 0 --> {Path(self.out_name).name}.  Done in {total_time/60:.2} min')        
+        print(f'{len(peak_vals):5d} detections in {len(self.reader)} frames in {total_time/60:.2} min from {Path(self.out_name).name}')
         with open(self.out_name, 'w') as f:
             json.dump(vid_detect, f, indent=2)
             
@@ -361,7 +373,7 @@ def are_we_already_done(args, out_dir, prefix):
     return True
 
 @torch.inference_mode()
-def run_vid(args, prefix):
+def run_vid(args, prefix, delete_old_locks_min=60):
 
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -371,7 +383,7 @@ def run_vid(args, prefix):
     # Load best checkpoint for current run:
     params.load_opt = 'best'
     params.load_run = None
-    min_val = 0 # -0.5
+    min_val = args.minval
 
     run_dir = os.path.join(os.path.dirname(__file__), params.output_dir, f'{params.run:03d}')
     out_dir = os.path.join(run_dir,'video')
@@ -412,12 +424,14 @@ def run_vid(args, prefix):
         return
 
     if args.png:
+        print(f'Doing detection in image folder {args.folder}')
         reader = ImageReader(args.folder, search=prefix+'*.json')
         if args.save:
             pv = RunDetections(reader, model, device, peaks, nms_proximity=args.nms, out_name = os.path.join(run_dir, "image_detections.json") )
         else:
             pv = PlotVideo(reader, model, device, peaks, nms_proximity=args.nms)            
     else:
+        print(f'Doing detection in video folder: {args.folder}')
         search = prefix + '*.mp4'
         videos = list(Path(args.folder).rglob(search))
         videos.sort()
@@ -428,6 +442,7 @@ def run_vid(args, prefix):
         if args.save:
             print(f'Storing detections in: {out_dir}')
         nskip=0
+        first = True
         for path in videos:
             if args.save:
                 out_name = os.path.join(out_dir, path.name.replace('.mp4','.json') )
@@ -437,23 +452,37 @@ def run_vid(args, prefix):
             if nskip:
                 print(f'Skipping {nskip} completed videos')
                 nskip=0
-            reader = VideoReader(str(path), samples_per_sec=1)
+            
+            lock_name = out_name.replace('.json','.lock')
+            # Delete old locks:
+            if os.path.exists(lock_name) and (time.time() - os.stat(lock_name).st_mtime) / 60 > delete_old_locks_min:
+                os.remove(lock_name) 
+            lock = SoftFileLock(lock_name, timeout=0.1)
+            try:
+                with lock:
+                    reader = VideoReader(str(path), samples_per_sec=1)
+                    if first:
+                        print(f'Starting with {len(reader)} frames from {reader.name}')
+                        first = False
 
-            pv = PlotVideo(reader, model, device, peaks, out_name, args.noplot, figname=f'Cam {prefix}', nms_proximity=args.nms)
-            if not pv.next_video:
-                break
+                    pv = PlotVideo(reader, model, device, peaks, out_name, noplot=args.save, figname=f'Cam {prefix}', nms_proximity=args.nms)
+                    if not pv.next_video:
+                        break
+            except Timeout:
+                pass
+                # print(f'Skipping {out_name} since locked')
+
 
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
     parser.add_argument('run', type=int, help='Run')    
-    parser.add_argument('--folder', type=str, default='/mnt/research/3D_Vision_Lab/Hens/ImagesJPG',  help='Folder for videos')    
-    #parser.add_argument('--folder', type=str, default='/mnt/home/dmorris/Data/hens/Hens_2021',  help='Folder for videos')    
+    parser.add_argument('--minval', type=float, default=0.,  help='Minimum peak value for detection')      
+    #parser.add_argument('--folder', type=str, default='/mnt/research/3D_Vision_Lab/Hens/ImagesJPG',  help='Folder for images or top-level of videos')    
+    parser.add_argument('--folder', type=str, default='/mnt/home/dmorris/Data/Hens/Hens_2021',  help='Folder for videos')    
     parser.add_argument('--prefix', type=str, nargs='+', default='',  help='search prefix')     
-    parser.add_argument('--png', action='store_true',  help='Read JPGs or PNGs instead')            
-    parser.add_argument('--savefile', type=str, default='',  help='Write detections')    
-    parser.add_argument('--noplot', action='store_true',  help='No plotting -- only if saving detections')            
+    parser.add_argument('--png', action='store_true',  help='Read JPGs or PNGs instead')   
     parser.add_argument('--compare', type=str, default='',  help='MP4 file for comparing to previous run')    
     parser.add_argument('--nms', type=float, default=12.,  help='Do NMS for 12 pixels')      
     parser.add_argument('--save', action='store_true',  help='Save detections')            
@@ -464,7 +493,7 @@ if __name__ == '__main__':
     #nt = cv.getNumThreads()
     #cv.setNumThreads(nt//len(args.prefix))
 
-    if args.noplot:
+    if len(args.prefix)>1 and args.save:
         print(f'Running separate threads for prefixes: {args.prefix}')
         # do multiple threads when not plotting
         threads = []  # 1 thread per prefix
@@ -477,6 +506,7 @@ if __name__ == '__main__':
         for t in threads:
             t.join()  #wait for all threads to complete
     else:
+        print('Running single thread')
         if len(args.prefix):
             for prefix in args.prefix:
                 run_vid(args,prefix)

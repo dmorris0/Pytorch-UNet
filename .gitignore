@@ -10,6 +10,8 @@ wandb/
 *.h5
 *.json
 *.csv
-out_eggs/
+*.avi
+out_eggs
+out_vis
 scores.png
 Plots

@@ -294,6 +294,7 @@ def get_run_params(run):
                         max_chans=96)
         elif run==19:
             # This is pretty good for 96 channels
+            # Alpha larger -> higher recall, alpha smaller -> higher precision
             params = Params(run, epochs = 100,
                         comment = 'Like 17, 18 (96 channels) but adjust focal loss to improve precision',
                         data_train='Eggs_train_no_small_23-02-15.h5', data_validation='Eggs_validation_tile_23-02-15.h5', 
@@ -797,6 +798,52 @@ def get_run_params(run):
                         pre_merge = False,
                         post_merge = False,
                         focal_loss_ag=(0.85,4.0),                # first 74 frames: (0.75, 4.)       
+                        dice_every_nth=1,
+                        batch_size=12,
+                        max_chans=96)
+        elif run==52:
+            params = Params(run, epochs = 120,
+                        comment = 'Train with ch 5 - 8',
+                        data_train='Eggs_train_ch_5678_23-03-28.h5', 
+                        data_validation='Eggs_validation_ch_1_23-03-28.h5', 
+                        data_test='Eggs_test_large_23-03-24.h5',
+                        load_opt='last',
+                        load_run=None,
+                        model_name='UNetTrack',
+                        do_nms = True,
+                        testrepeat=0,
+                        testoutfrac=0,
+                        add_prev_im=False,
+                        add_prev_out=False,
+                        n_previous_images=0,
+                        n_previous_min=0,
+                        rand_previous=False,
+                        pre_merge = False,
+                        post_merge = False,
+                        focal_loss_ag=(0.85,4.0),                # first 74 frames: (0.75, 4.)       
+                        dice_every_nth=1,
+                        batch_size=12,
+                        max_chans=96)
+        elif run==53:
+            params = Params(run, epochs = 120,
+                        comment = 'Train 1,2,3,5,6,8, Val 7, Test 4, alpha: .8, gamma: 4',
+                        data_train='Eggs_train_23-03-28.h5', 
+                        data_validation='Eggs_validation_23-03-28.h5', 
+                        data_test='Eggs_test_large_23-03-28.h5',
+                        load_opt='last',
+                        load_run=None,
+                        model_name='UNetTrack',
+                        do_nms = True,
+                        testrepeat=0,
+                        testoutfrac=0,
+                        add_prev_im=False,
+                        add_prev_out=False,
+                        n_previous_images=0,
+                        n_previous_min=0,
+                        rand_previous=False,
+                        pre_merge = False,
+                        post_merge = False,
+                        focal_loss_ag=(0.8,4.0),                # first 74 frames: (0.75, 4.)       
                         dice_every_nth=1,
                         batch_size=12,
                         max_chans=96)
