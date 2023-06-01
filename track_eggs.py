@@ -1,3 +1,11 @@
+''' Track eggs on video detections (made by run_video.py)
+
+    Example usage on videos from camera 4 from 07/28/2020:
+      python track_eggs.py 54 --prefix ch4_0728 --minseq 5 --minlen 2
+
+    Note: the video writing option uses OpenCV. This will need to be replaced with 
+    another video writer (similar to run_video.py)
+'''
 import os
 import sys
 from pathlib import Path
@@ -379,8 +387,8 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Plot tracks on video')
     parser.add_argument('run', type=int, help='Run')
-    parser.add_argument('--folder', type=str, default='/mnt/home/dmorris/Data/Hens/Hens_2021',  help='Folder for videos')    
-    parser.add_argument('--images', type=str, default='/mnt/home/dmorris/Data/Hens/ImagesJPG',  help='Folder for images')        
+    parser.add_argument('--folder', type=str, default='/mnt/research/3D_Vision_Lab/Hens/Hens/Hens_2021',  help='Folder for videos')    
+    parser.add_argument('--images', type=str, default='/mnt/research/3D_Vision_Lab/Hens/Hens/ImagesJPG',  help='Folder for images')        
     parser.add_argument('--prefix', type=str, nargs='+', default=[''],  help='search prefix')     
     parser.add_argument('--onvideo', action='store_true',  help='Plot on tracks on video')    
     parser.add_argument('--minlen', type=int, default=1, help='Minimum length of track (in observations)')

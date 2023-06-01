@@ -1,3 +1,17 @@
+''' Run detector on videos.
+
+    To run trained model 54 on cameras ch3, ch4 and ch5 do:
+      python run_video.py 54 --save --prefix ch3 ch4 ch5
+    It will run on recursively on the video folder finding all videos from these cameras.  
+
+    Note: OpenCV is not compatible with torchvision 0.15, so this code needs
+    to be modified to exclude OpenCV.  There is a PyTorch video reader described
+    here: https://pytorch.org/vision/main/auto_examples/plot_video_api.html
+    
+    After this is run on videos, tracks can be made with: track_eggs.py
+
+'''
+
 import os
 import sys
 import torch
