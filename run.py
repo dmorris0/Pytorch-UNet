@@ -1,5 +1,11 @@
 ''' Run trained model on test data
-    Can use plot_data.py to plot the output detections and heatmaps (use --outfrac to output results to .h5 file)
+    Usage to run on test data for run 54:
+      python run.py 54
+    Or to run and also save every 5th image plus detections to h5 file:
+      python run.py --outfrac 5
+
+    Can use plot_data.py to plot the output detections and heatmaps 
+    If --outfrac  set, then will plot detections for each image saved
 '''
 import os
 import sys
@@ -75,7 +81,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
     parser.add_argument('runlist', type=int, nargs='+',  help='List of runs')
-    parser.add_argument('--outfrac', type=float, default=None,  help='Fraction of images to save, None: use input params')
+    parser.add_argument('--outfrac', type=int, default=None,  help='Saves 1/outfrac of the image results (ex: 10 will save 1/10 images), None: use input params')
     
     args = parser.parse_args()
 

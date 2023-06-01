@@ -15,7 +15,7 @@ from timeit import default_timer as timer
 from filelock import Timeout, SoftFileLock
 import time
 
-from unet import UNetBlocks, UNetTrack
+from unet import UNetQuarter
 
 dirname = os.path.dirname(__file__)
 dataset_path = os.path.join( os.path.dirname(dirname), 'cvdemos', 'image')
@@ -393,24 +393,20 @@ def run_vid(args, prefix, delete_old_locks_min=60):
         print(f'Already completed all videos of type: {prefix}*.mp4, so quitting')
         return True
 
-    if params.model_name=='UNetBlocks':
-        model = UNetBlocks(n_channels=3, n_classes=params.classes, max_chans=params.max_chans,
-                           pre_merge = params.pre_merge, post_merge = params.post_merge)            
-    elif params.model_name=='UNetTrack':
-        model = UNetTrack(add_prev_im=params.add_prev_im, add_prev_out=params.add_prev_out,
-                          n_classes=params.classes, max_chans=params.max_chans)
-
-    model = model.to(memory_format=torch.channels_last)
+    if params.model_name=='UNetQuarter':
+        model = UNetQuarter(n_channels=3, n_classes=params.classes, max_chans=params.max_chans)            
+    else:
+        print(f'Error, unknown model {params.model_name}')
 
     cpoint, epoch = find_checkpoint(params)
     if cpoint:
         state_dict = torch.load(cpoint, map_location=device)
         model.load_state_dict(state_dict)
-        logging.info(f'Model loaded: {cpoint}')
+        print(f'Model loaded: {cpoint}')
     else:
         raise Exception('No model checkpoint')
 
-    model.to(device=device)
+    model = model.to(memory_format=torch.channels_last, device=device)
 
     model.eval()
     peaks = Peaks(1, device, min_val=min_val)  # Do peak finding on CPU
@@ -480,7 +476,7 @@ if __name__ == '__main__':
     parser.add_argument('run', type=int, help='Run')    
     parser.add_argument('--minval', type=float, default=0.,  help='Minimum peak value for detection')      
     #parser.add_argument('--folder', type=str, default='/mnt/research/3D_Vision_Lab/Hens/ImagesJPG',  help='Folder for images or top-level of videos')    
-    parser.add_argument('--folder', type=str, default='/mnt/home/dmorris/Data/Hens/Hens_2021',  help='Folder for videos')    
+    parser.add_argument('--folder', type=str, default='/mnt/research/3D_Vision_Lab/Hens/Hens_2021',  help='Folder for videos')    
     parser.add_argument('--prefix', type=str, nargs='+', default='',  help='search prefix')     
     parser.add_argument('--png', action='store_true',  help='Read JPGs or PNGs instead')   
     parser.add_argument('--compare', type=str, default='',  help='MP4 file for comparing to previous run')    

@@ -1,4 +1,8 @@
 ''' Plot results
+
+    To show test data for run 54:
+      python plot_data.py 54 --test
+
 '''
 import argparse
 import os, platform
