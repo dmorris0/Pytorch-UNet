@@ -10,14 +10,11 @@ import sys, os
 image_path = os.path.join( os.path.dirname(os.path.dirname(__file__)), 'cvdemos', 'image') 
 sys.path.append(image_path)
 from heatmap_score import Peaks, MatchScore
-from image_dataset import up_scale_coords
-from run_params import get_run_params
-
-# from utils.dice_score import multiclass_dice_coeff, dice_coeff
+from image_fun import boxes_to_centers, down_scale_coords
 
 class SaveResults:
 
-    def __init__(self, h5filename, batch, Nb, step, name="validation"):
+    def __init__(self, h5filename, images, heatmap, Nb, step, name="validation"):
 
         if h5filename:
             self.hf = h5py.File(h5filename, 'w')
@@ -26,16 +23,12 @@ class SaveResults:
             return
         self.json_filename = h5filename.replace('.h5','.json')
         group = self.hf.create_group(name)
-        N = Nb * batch['image'].shape[0]  # Total number of images
-        imshape = (N, batch['image'].shape[2], batch['image'].shape[3], batch['image'].shape[1])
-        centershape = (N, batch['centers'].shape[2], 2)
-        nshape = (N,)
-        heatshape = (N, batch['targets'].shape[2], batch['targets'].shape[3])
+        N = Nb * images.shape[0]  # Total number of images
+        imshape = (N, images.shape[2], images.shape[3], images.shape[1])
+        heatshape = (N, heatmap.shape[2], heatmap.shape[3])
         scoreshape = (N, 3)        
 
         group.create_dataset('images', shape=imshape, dtype='u1', compression='lzf')
-        group.create_dataset('centers', shape=centershape, dtype='f4' )
-        group.create_dataset('nobj', shape=nshape, dtype='i8' )
         group.create_dataset('heatmap',shape=heatshape, dtype='f4')               
         group.create_dataset('scores',shape=scoreshape, dtype='i8' )             
         group.create_dataset('params',shape=(2,), dtype='f4')
@@ -46,19 +39,19 @@ class SaveResults:
         self.data_annotations = {"image_file":h5filename, 
                                  name: {"targets": {},
                                         "scores": {},
-                                        "max_targets": batch['centers'].shape[2],
+                                        "max_targets": 0,
                                         "params": [],
                                         "step": step,
                                         }
                                  }
         self.index=0    
     
-    def add(self, images, centers, ncens, mask_preds, scores, min_val, max_distance, target_downscale):
+    def add(self, images, centers, mask_preds, scores, min_val, max_distance, target_downscale):
         if not self.hf is None:
-            for img, cens, ncen, preds, iscores in zip(images.cpu().numpy(), centers.cpu().numpy(), ncens.cpu().numpy(), mask_preds.cpu().numpy(), scores):
+            for img, cens, preds, iscores in zip(images.cpu().numpy(), centers, mask_preds.cpu().numpy(), scores):
                 self.group['images'][self.index] = (img.transpose((1,2,0))*255).astype(np.uint8)
                 self.group['heatmap'][self.index] = preds[0].astype(np.float32)
-                self.data_annotations[self.name]["targets"][str(self.index)] = cens[0][:ncen[0,0],:].tolist()
+                self.data_annotations[self.name]["targets"][str(self.index)] = cens[0]
                 self.data_annotations[self.name]["scores"][str(self.index)] = iscores.tolist()
                 self.index += 1        
             self.data_annotations[self.name]["params"] = [min_val, max_distance, target_downscale]
@@ -89,45 +82,39 @@ def evaluate_bce(net, dataloader, device, criterion, params, epoch, step, h5file
     model_time = 0
     nruns = 0
     # iterate over the validation set
-    with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=params.amp):
-        for i,batch in enumerate(tqdm(dataloader, total=num_val_batches, desc='Validation round', unit='batch', leave=False)):
-            image, mask_true, centers, ncen = batch['image'], batch['targets'], batch['centers'], batch['ncen']
+    for i, (images, data) in enumerate(tqdm(dataloader, total=num_val_batches, desc='Validation round', unit='batch', leave=False)):
 
-            start_time = timer()
-            # move images and labels to correct device and type
-            image = image.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
-            # mask_true = mask_true.to(device=device, dtype=torch.long)
-            mask_true = mask_true.to(device=device, dtype=float)
-            n_max = np.random.randint(params.n_previous_images+1) + 1 if params.n_previous_images and params.rand_previous else params.n_previous_images+1
+        images = torch.stack(images).to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
+        masks_true = torch.stack([x['mask'] for x in data]).to(device=device, dtype=torch.float32, memory_format=torch.channels_last)  # BCE requires float
+        
+        start_time = timer()
+        masks_pred = net(images)
+        assert masks_true.min() >= 0 and masks_true.max() <= 1, 'True mask indices should be in [0, 1]'
+        bce += criterion(masks_pred, masks_true)
 
-            # predict the mask
-            mask_pred = net.apply_to_stack(image, n_max)
-            for j in range(params.testrepeat):
-                mask_pred = mask_pred + net.apply_to_stack(image[:,(j+1)*3:(j+1)*3+3], n_max)
-            model_time += timer() - start_time
-            nruns += 1
+        model_time += timer() - start_time
+        nruns += 1
 
-            if epoch % params.dice_every_nth == 0:
-                detections = peaks.peak_coords( mask_pred )                
-                if params.do_nms:
-                    detect_vals = peaks.heatmap_vals( mask_pred, detections )
-                    detections, _ = peaks.nms( detections, detect_vals, params.max_distance / params.target_downscale, to_torch=True )
-                bscores,_,_ = matches.calc_match_scores( up_scale_coords( detections, params.target_downscale ), centers, ncen )
-            else:
-                bscores = np.nan*np.ones((params.batch_size,3))
+        if epoch % params.dice_every_nth == 0:
+            bc = [[down_scale_coords(boxes_to_centers(x["boxes"].detach()), params.target_downscale)] for x in data]            
+            detections = peaks.peak_coords( masks_pred.detach() )                        
+            if params.do_nms:
+                detect_vals = peaks.heatmap_vals( masks_pred, detections )
+                detections, _ = peaks.nms( detections, detect_vals, params.max_distance / params.target_downscale, to_torch=True )
+            bscores,_,_ = matches.calc_match_scores( detections, bc )        
+        else:
+            bscores = np.nan*np.ones((params.batch_size,3))
 
-            if not h5filename is None:
-                if params.testoutfrac and i % params.testoutfrac==0:
-                    if save is None:
-                        print(f'Saving raw output to {h5filename}')
-                        save = SaveResults(h5filename=h5filename, batch=batch, Nb=Nb, step=step)
-                    save.add( image, centers, ncen, mask_pred, bscores, min_val, params.max_distance, params.target_downscale )
+        if not h5filename is None:
+            if params.testoutfrac and i % params.testoutfrac==0:
+                if save is None:
+                    print(f'Saving raw output to {h5filename}')
+                    save = SaveResults(h5filename=h5filename, images=images, heatmap=masks_true, Nb=Nb, step=step)
+                centers = [[boxes_to_centers(x["boxes"].detach()).tolist()] for x in data] 
+                save.add( images, centers, masks_pred, bscores, min_val, params.max_distance, params.target_downscale )
 
-            scores += bscores.sum(axis=0)
+        scores += bscores.sum(axis=0)
 
-            assert mask_true.min() >= 0 and mask_true.max() <= 1, 'True mask indices should be in [0, 1]'
-
-            bce += criterion(mask_pred, mask_true)
 
     print(f'Time per batch: {model_time / nruns:.4f} sec')
 

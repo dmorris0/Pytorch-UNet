@@ -4,28 +4,20 @@
 import os
 import sys
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torchvision.transforms as transforms
-import torchvision.transforms.functional as TF
-import torchvision.ops
-from pathlib import Path
-from torch import optim
 from torch.utils.data import DataLoader, random_split
-from tqdm import tqdm
 import numpy as np
 import platform
 import json
 import argparse
 
 from evaluate_bce import evaluate_bce
-from unet import UNetBlocks, UNetTrack
+from unet import UNetQuarter
 from plot_data import save_scores, plot_scores
 
 dirname = os.path.dirname(__file__)
 dataset_path = os.path.join( os.path.dirname(dirname), 'cvdemos', 'image')
 sys.path.append(dataset_path)
-from image_dataset import ImageData
+from image_dataset2 import ImageData
 from synth_data import DrawData
 
 from run_params import get_run_params, find_checkpoint
@@ -37,12 +29,12 @@ def run_model(
         params):
 
     test_set = ImageData(os.path.join(params.data_dir, params.data_test),'test', 
-                            radius=params.dilate, target_downscale=params.target_downscale, rand_flip=False,
-                            n_previous_images = max(params.testrepeat, params.n_previous_images) )
+                            radius=params.dilate, target_downscale=params.target_downscale,
+                            transform = 'no_rot')
     if len(test_set)== 0:
         test_set = ImageData(os.path.join(params.data_dir, params.data_test),'validation', 
-                            radius=params.dilate, target_downscale=params.target_downscale, rand_flip=False,
-                            n_previous_images = max(params.testrepeat, params.n_previous_images) )
+                            radius=params.dilate, target_downscale=params.target_downscale,
+                            transform = 'no_rot')
     n_test = len(test_set)
     if n_test==0:
         raise Exception('No data in test set')
@@ -52,7 +44,9 @@ def run_model(
     # 3. Create data loaders
     num_workers = np.minimum(8,os.cpu_count()) if params.num_workers is None else params.num_workers
     loader_args = dict(batch_size=1, num_workers=num_workers, pin_memory=True)
-    test_loader = DataLoader(test_set, shuffle=False, drop_last=False, **loader_args)
+    test_loader = DataLoader(test_set, shuffle=False, drop_last=False,
+                             collate_fn=lambda batch: tuple(zip(*batch)), 
+                             **loader_args)
 
     dir_run = os.path.join(os.path.dirname(__file__), params.output_dir, f'{params.run:03d}')
     os.makedirs(os.path.join(dir_run,'test'), exist_ok=True)
@@ -87,24 +81,19 @@ if __name__ == '__main__':
 
     for run in args.runlist:
 
-        params = get_run_params(run)        
+        params = get_run_params(run)       
+        # Override load options: 
         params.load_opt = 'best'
         params.load_run = None
         if not args.outfrac is None:
             params.testoutfrac = args.outfrac
         print(80*"=")
-        if os.name == 'nt':        
-            device = torch.device('cpu')  # My windows GPU is very slow
-        else:
-            device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-        if params.model_name=='UNetBlocks':
-            model = UNetBlocks(n_channels=3, n_classes=params.classes, max_chans=params.max_chans,
-                                pre_merge = params.pre_merge, post_merge = params.post_merge)            
-        elif params.model_name=='UNetTrack':
-            model = UNetTrack(add_prev_im=params.add_prev_im, add_prev_out=params.add_prev_out,
-                              n_classes=params.classes, max_chans=params.max_chans)
-        model = model.to(memory_format=torch.channels_last)
+        if params.model_name=='UNetQuarter':
+            model = UNetQuarter(n_channels=3, n_classes=params.classes, max_chans=params.max_chans)            
+        else:
+            print(f'Error, unknown model {params.model_name}')
 
         cpoint, epoch = find_checkpoint(params)
         if cpoint:
@@ -114,7 +103,7 @@ if __name__ == '__main__':
         else:
             raise Exception('No model checkpoint')
 
-        model.to(device=device)
+        model = model.to(memory_format=torch.channels_last, device=device)
 
         run_model(
             model=model,

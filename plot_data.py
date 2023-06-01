@@ -10,9 +10,7 @@ import numpy as np
 import shutil
 
 from run_params import get_run_params
-import sys
-sys.path.append('../cvdemos/image')
-from synth_data import DrawData
+
 
 def draw_targets(ax, targets, radius, color ):
     ax.set_xlim(*ax.get_xlim())
@@ -107,6 +105,12 @@ def plot_scores(train_scores, val_scores, run, filename=None, comment=''):
 
 
 if __name__=="__main__":
+    
+    import sys
+    dirname = os.path.dirname(__file__)
+    dataset_path = os.path.join( os.path.dirname(dirname), 'cvdemos', 'image')
+    sys.path.append(dataset_path)
+    from synth_data import DrawData
 
     parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
     parser.add_argument('run', type=int,  help='Run number')

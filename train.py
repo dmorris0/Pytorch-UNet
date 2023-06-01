@@ -1,11 +1,25 @@
+''' Train UNet model
+
+    To run, first create a new run number in run_params.py and set your parameters
+    there.  For example, I set parameters for run number 54.  Then to train do:
+      python train.py 54
+
+    If load_opt='last' in run_params.py, then running the above will load the last checkpoint
+    and continue training.
+    
+    This does training and validation.  Plots and checkpoints are saved in: out_eggs/ and Plots/
+    To run a trained model on test data use: run.py
+    To plot performance as well as test results use: plot_data.py
+
+    Daniel Morris, 2023
+
+'''
+
 import logging
 import os
 import sys
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torchvision.transforms as transforms
-import torchvision.transforms.functional as TF
 import torchvision.ops
 from pathlib import Path
 from torch import optim
@@ -17,22 +31,22 @@ import json
 import argparse
 import shutil
 
-#import wandb
 from evaluate_bce import evaluate_bce
-from unet import UNet, UNetSmall, UNetSmallQuarter,  UNetBlocks, UNetTrack
+from unet import UNetQuarter
 from plot_data import save_scores, read_scores, plot_scores
 from run_params import get_run_params, get_run_dirs, find_checkpoint
 
 dirname = os.path.dirname(__file__)
 dataset_path = os.path.join( os.path.dirname(dirname), 'cvdemos', 'image')
 sys.path.append(dataset_path)
-from image_dataset import ImageData
+from image_dataset2 import ImageData
+from image_fun import boxes_to_centers, down_scale_coords
 from heatmap_score import Peaks, MatchScore
 
 
 def get_criterion(params, pos_weight = torch.Tensor([1.])):
     if params.focal_loss_ag is None:
-        criterion = nn.CrossEntropyLoss() if model.n_classes > 1 else nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     else:
         criterion = lambda inputs, targets: torchvision.ops.sigmoid_focal_loss(
             inputs, targets, alpha=params.focal_loss_ag[0], gamma=params.focal_loss_ag[1], reduction='mean')
@@ -43,28 +57,37 @@ def train_model( model, device, params, epoch):
     # 1. Create dataset
     if params.data_validation is None:
         dataset = ImageData(os.path.join(params.data_dir, params.data_train),'train', 
-                            radius=params.dilate, target_downscale=params.target_downscale, 
-                            rand_flip=True, n_previous_images = params.n_previous_images)
+                            radius=params.dilate, target_downscale=params.target_downscale) #, 
+                            #rand_flip=True, n_previous_images = params.n_previous_images)
         data_pos_weight = dataset.pos_weight
         n_val = int(len(dataset) * 0.12)
         n_train = len(dataset) - n_val
         train_set, val_set = random_split(dataset, [n_train, n_val], generator=torch.Generator().manual_seed(0))
     else:
         train_set = ImageData(os.path.join(params.data_dir, params.data_train),'train',     
-                              radius=params.dilate, target_downscale=params.target_downscale, 
-                            rand_flip=True, n_previous_images = params.n_previous_images)
+                              radius=params.dilate, target_downscale=params.target_downscale) #, 
+                            #rand_flip=True, n_previous_images = params.n_previous_images)
         val_set   = ImageData(os.path.join(params.data_dir, params.data_validation),'validation',
-                              radius=params.dilate, target_downscale=params.target_downscale, 
-                            rand_flip=False, n_previous_images = params.n_previous_images)
+                              radius=params.dilate, target_downscale=params.target_downscale) #, 
+                            #rand_flip=False, n_previous_images = params.n_previous_images)
         n_train, n_val = len(train_set), len(val_set)
         data_pos_weight = train_set.pos_weight
 
 
     # 3. Create data loaders
-    num_workers = np.minimum(8,os.cpu_count()) if params.num_workers is None else params.num_workers
+    if True:
+        num_workers = np.minimum(8,os.cpu_count()) if params.num_workers is None else params.num_workers
+    else:
+        num_workers = 0
+        print('Zero workers')
     loader_args = dict(batch_size=params.batch_size, num_workers=num_workers, pin_memory=True)
-    train_loader = DataLoader(train_set, shuffle=True, **loader_args)
-    val_loader = DataLoader(val_set, shuffle=False, drop_last=True, **loader_args)
+    # Add collate to generate lists instead of stacks to handle varying number of bounding boxes:
+    train_loader = DataLoader(train_set, shuffle=True, 
+                              collate_fn=lambda batch: tuple(zip(*batch)),  
+                              **loader_args)
+    val_loader = DataLoader(val_set, shuffle=False, drop_last=True, 
+                            collate_fn=lambda batch: tuple(zip(*batch)),
+                            **loader_args)
 
     dir_run, dir_checkpoint = get_run_dirs(params.output_dir, params.run)
     Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
@@ -73,17 +96,6 @@ def train_model( model, device, params, epoch):
     dir_plot = os.path.join(params.output_dir,'Plots')
     os.makedirs( dir_plot, exist_ok=True)
 
-    # (Initialize logging)
-    if params.do_wandb:
-        experiment = wandb.init(project='U-Net', resume='allow', anonymous='must')
-        wandb.run.name = f'run-{params.run}-{wandb.run.name}'
-        experiment.config.update(
-            dict(epochs=params.epochs, batch_size=params.batch_size, learning_rate=params.lr,
-                save_checkpoint=params.save_checkpoint, img_scale=params.scale, amp=params.amp)
-        )
-        with open(os.path.join(dir_run,'wandb-run-info.txt'),'w') as f:
-            print(f'{wandb.run.name}',file=f)
-            print(f'{wandb.run.get_url()}',file=f)
     with open(os.path.join(dir_run, 'params.json'),'w') as f:
         json.dump(vars(params), f, indent=4)    # Use vars() to convert it to a dict
 
@@ -111,11 +123,6 @@ def train_model( model, device, params, epoch):
         Epochs:           {params.epochs}     
         Max Channels:     {params.max_chans}   
         Batch size:       {params.batch_size}
-        N Prev Images     {params.n_previous_images}
-        Add prev image    {params.add_prev_im}
-        Add prev out      {params.add_prev_out}
-        Pre-Merge:        {params.pre_merge}
-        Post-Merge:       {params.post_merge}
         Learning rate:    {params.lr}
         Device:           {device.type}
         Focal Loss:       {params.focal_loss_ag}
@@ -140,27 +147,14 @@ def train_model( model, device, params, epoch):
         epoch_loss = 0
         totscores = np.zeros( (5,))
         with tqdm(total=n_train, desc=f'Epoch {epoch}/{params.epochs}', unit='img') as pbar:
-            for nb, batch in enumerate(train_loader):
-                images, true_masks, centers, ncen = batch['image'], batch['targets'], batch['centers'], batch['ncen']
 
-                images = images.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
-                true_masks = true_masks.to(device=device, dtype=float)  # BCE requires float
-                n_max = np.random.randint(params.n_previous_images-params.n_previous_min+1) + 1 + params.n_previous_min \
-                     if params.n_previous_images and params.rand_previous else params.n_previous_images+1
+            for nb, (images, data) in enumerate(train_loader):  # This is image_dataset2
 
-                with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=params.amp):
+                images = torch.stack(images).to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
+                masks_true = torch.stack([x['mask'] for x in data]).to(device=device, dtype=torch.float32, memory_format=torch.channels_last)  # BCE requires float
 
-                    masks_pred = model.apply_to_stack(images, n_max)
-                    loss = criterion(masks_pred, true_masks)
-
-                    if epoch % params.dice_every_nth == 0:
-                        detections = peaks.peak_coords( masks_pred.detach() )                        
-                        iscores,_,_ = matches.calc_match_scores( detections, centers.detach()/params.target_downscale, ncen.detach() )
-                        scores = iscores.sum(axis=0)
-                    else:
-                        scores = np.nan * np.ones((3,))
-                    totscores += np.concatenate( ((1,loss.item(),),scores) )
-
+                masks_pred = model(images)
+                loss = criterion(masks_pred, masks_true)
 
                 optimizer.zero_grad(set_to_none=True)
                 grad_scaler.scale(loss).backward()
@@ -168,26 +162,20 @@ def train_model( model, device, params, epoch):
                 grad_scaler.step(optimizer)
                 grad_scaler.update()
 
+                if epoch % params.dice_every_nth == 0:
+                    bc = [[down_scale_coords(boxes_to_centers(x["boxes"].detach()), params.target_downscale)] for x in data]
+                    detections = peaks.peak_coords( masks_pred.detach() )                        
+                    iscores,_,_ = matches.calc_match_scores( detections, bc )  #/params.target_downscale )
+                    scores = iscores.sum(axis=0)
+                else:
+                    scores = np.nan * np.ones((3,))
+                totscores += np.concatenate( ((1,loss.item(),),scores) )
+                
                 pbar.update(images.shape[0])
                 global_step += 1
                 epoch_loss += loss.item()
-
-                if params.do_wandb:
-                    experiment.log({
-                        'train loss': loss.item(),
-                        'step': global_step,
-                        'epoch': epoch
-                    })
+                
                 pbar.set_postfix(**{'loss ': epoch_loss/(nb+1)})
-
-        if params.do_wandb:
-            histograms = {}
-            for tag, value in model.named_parameters():
-                tag = tag.replace('/', '.')
-                if not torch.isinf(value).any():
-                    histograms['Weights/' + tag] = wandb.Histogram(value.data.cpu())
-                if not torch.isinf(value.grad).any():
-                    histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
 
         val_loss, scores, val_dice, val_pr, val_re = evaluate_bce(
                     model, val_loader, device, criterion, params, epoch, global_step )
@@ -200,25 +188,6 @@ def train_model( model, device, params, epoch):
             best_val_dice = val_dice
 
         logging.info(f'Validation Loss {val_loss:.3}, Dice {val_dice:.3f}, Pr {val_pr:.3f}, Re {val_re:.3f}')
-        try:
-            if params.do_wandb:
-                experiment.log({
-                                'learning rate': optimizer.param_groups[0]['lr'],
-                                'validation loss': val_loss,
-                                'validation dice': val_dice,
-                                'best_val_dice': best_val_dice,
-                                'images': wandb.Image(images[0].cpu()),
-                                'masks': {
-                                    'true': wandb.Image(true_masks[0].float().cpu()),
-                                    'pred': wandb.Image(masks_pred.argmax(dim=1)[0].float().cpu()),
-                                },
-                                'step': global_step,
-                                'epoch': epoch,
-                                'best_epoch': best_epoch,
-                                **histograms
-                            })
-        except:
-            pass
         
         with open(os.path.join(dir_run, 'train', f'log_{epoch:03d}.json'),'w') as f:
             json.dump({
@@ -261,16 +230,13 @@ if __name__ == '__main__':
         print(80*"=")
         logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        #device = torch.device('cpu')
         assert params.target_downscale==4, f'Assumes downscaling by 4'
 
-        if params.model_name=='UNetBlocks':
-            model = UNetBlocks(n_channels=3, n_classes=params.classes, max_chans=params.max_chans,
-                                pre_merge = params.pre_merge, post_merge = params.post_merge)            
-        elif params.model_name=='UNetTrack':
-            model = UNetTrack(add_prev_im=params.add_prev_im, add_prev_out=params.add_prev_out,
-                              n_classes=params.classes, max_chans=params.max_chans)
-
-        model = model.to(memory_format=torch.channels_last)
+        if params.model_name=='UNetQuarter':
+            model = UNetQuarter(n_channels=3, n_classes=params.classes, max_chans=params.max_chans)            
+        else:
+            print(f'Error, unknown model {params.model_name}')
 
         cpoint, epoch = find_checkpoint(params)
         if cpoint:
@@ -278,7 +244,7 @@ if __name__ == '__main__':
             model.load_state_dict(state_dict)
             logging.info(f'Model loaded from {cpoint}')
 
-        model.to(device=device)
+        model = model.to(memory_format=torch.channels_last, device=device)
 
         train_model(model=model, device=device, params=params, epoch=epoch)
         

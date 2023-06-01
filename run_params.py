@@ -128,18 +128,27 @@ class Params():
 
 def get_run_params(run):
         if run==0:
-            params = Params(run, epochs = 0,
-                        data_train='Eggs_train_small.h5', data_validation=None,
-                        )
+            params = Params(run, epochs = 1,
+                        data_train='Eggs_train_small.h5', 
+                        data_validation=None,
+                        load_opt=None,
+                        target_downscale=4,      
+                        model_name='UNetQuarter',
+                        focal_loss_ag=None,
+                        batch_size=1,
+                        max_chans=8)
         elif run==1:
             params = Params(run, epochs = 4,
                         comment = 'test train',
                         data_train='Eggs_train_23-02-15.h5', 
                         data_validation='Eggs_validation_tile_23-02-15.h5', 
-                        focal_loss_ag=(0.85,4.0),      
+                        focal_loss_ag=None, #(0.85,4.0),
+                        target_downscale=4,      
                         load_opt=None,                    
-                        batch_size=4,
-                        max_chans=96)
+                        model_name='UNetQuarter',
+                        
+                        batch_size=1,
+                        max_chans=8)
         elif run==2:
             params = Params(run, epochs = 80,
                         data_train='Eggs_train.h5', data_validation='Eggs_validation.h5', 
@@ -843,6 +852,22 @@ def get_run_params(run):
                         rand_previous=False,
                         pre_merge = False,
                         post_merge = False,
+                        focal_loss_ag=(0.8,4.0),                # first 74 frames: (0.75, 4.)       
+                        dice_every_nth=1,
+                        batch_size=12,
+                        max_chans=96)
+        elif run==54:
+            params = Params(run, epochs = 100,
+                        comment = 'New augmentation',
+                        data_train='Eggs_train_23-03-28.h5', 
+                        data_validation='Eggs_validation_23-03-28.h5', 
+                        data_test='Eggs_test_large_23-03-28.h5',
+                        load_opt='last',
+                        load_run=None,
+                        model_name='UNetQuarter',
+                        do_nms = True,
+                        testrepeat=0,
+                        testoutfrac=10,
                         focal_loss_ag=(0.8,4.0),                # first 74 frames: (0.75, 4.)       
                         dice_every_nth=1,
                         batch_size=12,
