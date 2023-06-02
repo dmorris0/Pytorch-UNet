@@ -36,11 +36,11 @@ def run_model(
 
     test_set = ImageData(os.path.join(params.data_dir, params.data_test),'test', 
                             radius=params.dilate, target_downscale=params.target_downscale,
-                            transform = 'no_rot')
+                            transform = 'none')
     if len(test_set)== 0:
         test_set = ImageData(os.path.join(params.data_dir, params.data_test),'validation', 
                             radius=params.dilate, target_downscale=params.target_downscale,
-                            transform = 'no_rot')
+                            transform = 'none')
     n_test = len(test_set)
     if n_test==0:
         raise Exception('No data in test set')
