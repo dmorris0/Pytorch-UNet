@@ -68,7 +68,7 @@ class SaveResults:
             self.hf.close()
 
 @torch.inference_mode()
-def evaluate_bce(net, dataloader, device, criterion, params, epoch, step, h5filename=None):
+def evaluate_bce(net, dataloader, device, criterion, params, epoch, step, h5filename=None, outfrac=0):
     net.eval()
     num_val_batches = len(dataloader)
     bce = 0
@@ -78,6 +78,9 @@ def evaluate_bce(net, dataloader, device, criterion, params, epoch, step, h5file
     matches = MatchScore(max_distance = params.max_distance)
     save = None    
     Nb = np.ceil( len(dataloader) / max(1, params.testoutfrac) ).astype(int)
+
+    if h5filename and outfrac:
+        print(f'Saving 1/{outfrac} images to {h5filename}')        
 
     model_time = 0
     nruns = 0
@@ -105,10 +108,9 @@ def evaluate_bce(net, dataloader, device, criterion, params, epoch, step, h5file
         else:
             bscores = np.nan*np.ones((params.batch_size,3))
 
-        if not h5filename is None:
-            if params.testoutfrac and i % params.testoutfrac==0:
+        if h5filename:
+            if outfrac and i % outfrac==0:
                 if save is None:
-                    print(f'Saving raw output to {h5filename}')
                     save = SaveResults(h5filename=h5filename, images=images, heatmap=masks_true, Nb=Nb, step=step)
                 centers = [[boxes_to_centers(x["boxes"].detach()).tolist()] for x in data] 
                 save.add( images, centers, masks_pred, bscores, min_val, params.max_distance, params.target_downscale )

@@ -20,6 +20,8 @@ import os
 import sys
 import torch
 import torch.nn as nn
+import torchvision
+torchvision.disable_beta_transforms_warning()
 import torchvision.ops
 from pathlib import Path
 from torch import optim
@@ -34,7 +36,7 @@ import shutil
 from evaluate_bce import evaluate_bce
 from unet import UNetQuarter
 from plot_data import save_scores, read_scores, plot_scores
-from run_params import get_run_params, get_run_dirs, find_checkpoint
+from run_params import get_run_params, get_run_dirs, find_checkpoint, init_model
 
 dirname = os.path.dirname(__file__)
 dataset_path = os.path.join( os.path.dirname(dirname), 'cvdemos', 'image')
@@ -230,21 +232,8 @@ if __name__ == '__main__':
         print(80*"=")
         logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-        #device = torch.device('cpu')
-        assert params.target_downscale==4, f'Assumes downscaling by 4'
 
-        if params.model_name=='UNetQuarter':
-            model = UNetQuarter(n_channels=3, n_classes=params.classes, max_chans=params.max_chans)            
-        else:
-            print(f'Error, unknown model {params.model_name}')
-
-        cpoint, epoch = find_checkpoint(params)
-        if cpoint:
-            state_dict = torch.load(cpoint, map_location=device)
-            model.load_state_dict(state_dict)
-            logging.info(f'Model loaded from {cpoint}')
-
-        model = model.to(memory_format=torch.channels_last, device=device)
+        model, epoch = init_model(params, device)
 
         train_model(model=model, device=device, params=params, epoch=epoch)
         

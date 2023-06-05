@@ -1,7 +1,10 @@
 ''' Plot results
 
-    To show test data for run 54:
-      python plot_data.py 54 --test
+    To show training convergence for run 54:
+      python plot_data.py --run 54
+
+    To show saved image detection results from run.py:
+      python plot_data.py --testdir /mnt/scratch/dmorris/testruns/Eggs_ch1_23-06-04
 
 '''
 import argparse
@@ -12,6 +15,9 @@ from matplotlib.patches import Circle
 from pathlib import Path
 import numpy as np
 import shutil
+
+import torchvision
+torchvision.disable_beta_transforms_warning()
 
 from run_params import get_run_params
 
@@ -117,39 +123,34 @@ if __name__=="__main__":
     from synth_data import DrawData
 
     parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
-    parser.add_argument('run', type=int,  help='Run number')
-    parser.add_argument('--test', action='store_true', help="Plot test run")
-    parser.add_argument('--skiptp', action='store_true', help="Skip images with only True Positives")
+    parser.add_argument('--run', type=int, default=None,     help='Run number to plot training convergence')
+    parser.add_argument('--testdir', type=str, default=None, help="Output folder from run.py containing image.h5 etc.")
+    parser.add_argument('--skiptp', action='store_true',     help="Skip images with only True Positives")
 
 
     args = parser.parse_args()
 
-    params = get_run_params(args.run)
+    if not args.run is None:
+        params = get_run_params(args.run)
 
-    overwrite_png = True
+        overwrite_png = True
 
-    if not os.name =="nt":
-        global_data_dir = '/mnt/home/dmorris/Data/eggs'
-    elif platform.node()=='DM-O':
-        global_data_dir = 'D:/Data/Eggs/data'
-    else:
-        raise Exception(f"Unknown platform: {platform.node()}")
+        dir_run = os.path.join(os.path.dirname(__file__), params.output_dir, f'{args.run:03d}')
 
-    dir_run = os.path.join(os.path.dirname(__file__), params.output_dir, f'{args.run:03d}')
+        tscores = read_scores(os.path.join(dir_run,"train_scores.csv"))
+        vscores = read_scores(os.path.join(dir_run,"val_scores.csv"))
 
-    #etscores = read_scores(os.path.join(dir_run,"train_epoch_scores.csv"))
-    tscores = read_scores(os.path.join(dir_run,"train_scores.csv"))
-    vscores = read_scores(os.path.join(dir_run,"val_scores.csv"))
+        outpng = os.path.join(dir_run,f"scores_{args.run:03d}.png") if overwrite_png else None
 
-    outpng = os.path.join(dir_run,f"scores_{args.run:03d}.png") if overwrite_png else None
+        dir_plot = os.path.join(params.output_dir,'Plots')
+        plot_scores(tscores, vscores, args.run, outpng, comment = params.comment)    
 
-    dir_plot = os.path.join(params.output_dir,'Plots')
-    plot_scores(tscores, vscores, args.run, outpng, comment = params.comment)    
+        shutil.copy2(outpng, dir_plot)
+        if not args.testdir:
+            plt.show()
 
-    shutil.copy2(outpng, dir_plot)
-
-    if args.test:
-        test_scores = read_scores(os.path.join(dir_run,"test_scores.csv"))
+    if args.testdir:
+        test_scores = read_scores(os.path.join(args.testdir,"test_scores.csv"))
         scores = test_scores[0,2:].round().astype(int)
         dice = 2*scores[0] / (scores[0]+scores.sum()+1e-3)
         precision = scores[0]/ (scores[0]+scores[1]+1e-3)
@@ -159,21 +160,10 @@ if __name__=="__main__":
         print(f'Dice: {dice:.3}, Precision: {precision:.3}, Recall: {recall:.3}')
         print('='*80)
 
-        outname = os.path.join(dir_run,'test',f'output.h5')
+        outname = os.path.join(args.testdir,f'images.h5')
         if os.path.exists(outname):
-            dd = DrawData(outname, recalc_scores=True, do_nms = params.do_nms, skiptp = args.skiptp)
+            dd = DrawData(outname, recalc_scores=True, do_nms = True, skiptp = args.skiptp)
             dd.plot()
         else:
             plt.show()
-
-    if False:
-        if args.test:
-            files = [str(x) for x in list(Path(os.path.join(dir_run,'test')).glob('*.h5'))]
-        else:
-            files = [str(x) for x in list(Path(os.path.join(dir_run,'val')).glob('*.h5'))]
-        files.sort()
-        filename = files[-1]
-
-        dd = DrawData(filename, recalc_scores=True)
-        dd.plot()
     

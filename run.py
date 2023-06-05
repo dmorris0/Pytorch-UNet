@@ -1,23 +1,30 @@
 ''' Run trained model on test data
-    Usage to run on test data for run 54:
-      python run.py 54
-    Or to run and also save every 5th image plus detections to h5 file:
-      python run.py --outfrac 5
+    Usage example
+      python run.py 54 \
+                --outfrac 5 \
+                --loadmodel /mnt/research/3D_Vision_Lab/Hens/models/054_UNetQuarter.pth \
+                --inputfile /mnt/research/3D_Vision_Lab/Hens/eggs/Eggs_ch1_23-06-04.h5 \
+                --outputdir /mnt/scratch/dmorris/testruns/Eggs_ch1_23-06-04
+    Gets parameters from run 54 using get_run_params()
+    Loads model: 054_UNetQuarter.pth, which must match parameters in run 54
+    if <num> in --outfrac <num> is > 0 (default), then saves images and heatmaps in output folder.
+    Saves 1/<num> of the input images.  Ex. 10 will save 1/10 of input images in outputdir.
 
-    Can use plot_data.py to plot the output detections and heatmaps 
-    If --outfrac  set, then will plot detections for each image saved
+    Afterwards, use plot_data.py to plot the output detections and heatmaps (if --outfrac is set)
 '''
 import os
 import sys
 import torch
-from torch.utils.data import DataLoader, random_split
 import numpy as np
-import platform
-import json
 import argparse
+from pathlib import Path
+
+import torchvision
+torchvision.disable_beta_transforms_warning()
+from torch.utils.data import DataLoader
+
 
 from evaluate_bce import evaluate_bce
-from unet import UNetQuarter
 from plot_data import save_scores, plot_scores
 
 dirname = os.path.dirname(__file__)
@@ -26,26 +33,27 @@ sys.path.append(dataset_path)
 from image_dataset2 import ImageData
 from synth_data import DrawData
 
-from run_params import get_run_params, find_checkpoint
+from run_params import get_run_params, init_model
 from train import get_criterion
 
 def run_model(
         model,
         device,
-        params):
+        params,
+        outfrac,
+        inputfile,
+        outputdir):
 
-    test_set = ImageData(os.path.join(params.data_dir, params.data_test),'test', 
-                            radius=params.dilate, target_downscale=params.target_downscale,
-                            transform = 'none')
-    if len(test_set)== 0:
-        test_set = ImageData(os.path.join(params.data_dir, params.data_test),'validation', 
-                            radius=params.dilate, target_downscale=params.target_downscale,
-                            transform = 'none')
+    if inputfile is None:
+        inputfile = os.path.join(params.data_dir, params.data_test)
+
+    test_set = ImageData( inputfile, radius=params.dilate, 
+                          target_downscale=params.target_downscale,
+                          transform = 'none')
     n_test = len(test_set)
     if n_test==0:
         raise Exception('No data in test set')
-    data_pos_weight = test_set.pos_weight
-    print(f'Running on {n_test} test images')
+    print(f'Running on {n_test} images in: {inputfile}')
 
     # 3. Create data loaders
     num_workers = np.minimum(8,os.cpu_count()) if params.num_workers is None else params.num_workers
@@ -54,23 +62,23 @@ def run_model(
                              collate_fn=lambda batch: tuple(zip(*batch)), 
                              **loader_args)
 
-    dir_run = os.path.join(os.path.dirname(__file__), params.output_dir, f'{params.run:03d}')
-    os.makedirs(os.path.join(dir_run,'test'), exist_ok=True)
-    outname = os.path.join(dir_run,'test',f'output.h5')
+    if outputdir is None:
+        outputdir = os.path.join(os.path.dirname(__file__), params.output_dir, f'{params.run:03d}',Path(inputfile).stem)
+    os.makedirs(outputdir, exist_ok=True)
+    outname = os.path.join(outputdir,f'images.h5')
 
     # Find positive weights for single-pixel positives:
-    pos_weight = torch.Tensor([data_pos_weight/params.target_downscale**2]).to(device)
-    criterion = get_criterion(params, pos_weight)
+    criterion = get_criterion(params)
 
     test_loss, scores, test_dice, test_pr, test_re = evaluate_bce(
                     model, test_loader, device, criterion, params,
-                    0, 0, outname )
+                    0, 0, outname, outfrac )
 
     print(f'Dice: {test_dice:.3}, Precision: {test_pr:.3}, Recall: {test_re:.3}')
 
     testscores = np.concatenate( ((0,test_loss,),scores) ) 
 
-    save_scores(os.path.join(dir_run, "test_scores.csv"), testscores)
+    save_scores(os.path.join(outputdir, "test_scores.csv"), testscores)
 
     print(f'To see plots again run: python plot_data.py {params.run} --test')
     if params.testoutfrac:
@@ -79,40 +87,35 @@ def run_model(
 
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
+    parser = argparse.ArgumentParser(description='Run the trained model')
     parser.add_argument('runlist', type=int, nargs='+',  help='List of runs')
-    parser.add_argument('--outfrac', type=int, default=None,  help='Saves 1/outfrac of the image results (ex: 10 will save 1/10 images), None: use input params')
+    parser.add_argument('--inputfile', type=str, default=None,  help='Input .h5 data filename including full path. (Assumes .json too).  In None, then finds it from params')
+    parser.add_argument('--outputdir', type=str, default=None,  help='Output folder.  In None, then finds name from params')
+    parser.add_argument('--outfrac', type=int, default=0,    help='Saves 1/outfrac of the image results (ex: 10 will save 1/10 images), 0 means none saved')
+    parser.add_argument('--loadmodel', type=str, default=None,  help='Load a specified model name -- overrides model specified in params')
     
     args = parser.parse_args()
 
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
     for run in args.runlist:
 
+        print(80*"=")
+
         params = get_run_params(run)       
-        # Override load options: 
-        params.load_opt = 'best'
-        params.load_run = None
         if not args.outfrac is None:
             params.testoutfrac = args.outfrac
-        print(80*"=")
-        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-        if params.model_name=='UNetQuarter':
-            model = UNetQuarter(n_channels=3, n_classes=params.classes, max_chans=params.max_chans)            
-        else:
-            print(f'Error, unknown model {params.model_name}')
-
-        cpoint, epoch = find_checkpoint(params)
-        if cpoint:
-            state_dict = torch.load(cpoint, map_location=device)
-            model.load_state_dict(state_dict)
-            print(f'Model loaded: {cpoint}')
-        else:
-            raise Exception('No model checkpoint')
-
-        model = model.to(memory_format=torch.channels_last, device=device)
-
+        # If we don't specify a loadmodel, then want to always load the best checkpoint (rather than last checkpoint)
+        params.load_opt = 'best'
+        model, _ = init_model(params, device, args.loadmodel)
+            
         run_model(
-            model=model,
-            device=device,
-            params=params)
+            model     = model,
+            device    = device,
+            params    = params,
+            outfrac   = args.outfrac,
+            inputfile = args.inputfile,
+            outputdir = args.outputdir,
+            )
         

@@ -4,6 +4,8 @@
 import os
 from pathlib import Path
 import platform
+import torch
+from unet import UNetQuarter
 
 def get_run_dirs(output_dir, run):
     dir_run = os.path.join(os.path.dirname(__file__), output_dir, f'{run:03d}')
@@ -34,6 +36,34 @@ def find_checkpoint(params):
     else:
         raise Exception(f'Invalid params.load_opt: {params.load_opt}')
     return cpoint, epoch
+
+
+def init_model(params, device, loadmodel=None):
+    if params.model_name=='UNetQuarter':
+        model = UNetQuarter(n_channels=3, n_classes=params.classes, max_chans=params.max_chans)            
+        assert params.target_downscale==4, f'Assumes downscaling by 4'
+    else:
+        print(f'Error, unknown model {params.model_name}')
+
+    if loadmodel is None:            
+        cpoint, epoch = find_checkpoint(params)
+    else:
+        # Load specified model
+        cpoint = loadmodel
+        if not os.path.exists(str(cpoint)):
+            raise Exception(f'Cannot find model {cpoint}')
+        epoch = 0
+            
+    if cpoint:
+        state_dict = torch.load(cpoint, map_location=device)
+        model.load_state_dict(state_dict)
+        print(f'Model loaded: {cpoint}')
+
+    model = model.to(memory_format=torch.channels_last, device=device)
+
+    return model, epoch
+    
+
 
 class Params():
     def __init__(self,
@@ -117,7 +147,7 @@ class Params():
 
         if not self.data_dir:
             if not os.name =="nt":
-                self.data_dir = '/mnt/home/dmorris/Data/eggs'
+                self.data_dir = '/mnt/research/3D_Vision_Lab/Hens/eggs'
             elif platform.node()=='DM-O':
                 self.data_dir = 'D:/Data/Eggs/data'
             elif platform.node()=="BAE003":
@@ -145,8 +175,7 @@ def get_run_params(run):
                         focal_loss_ag=None, #(0.85,4.0),
                         target_downscale=4,      
                         load_opt=None,                    
-                        model_name='UNetQuarter',
-                        
+                        model_name='UNetQuarter',                        
                         batch_size=1,
                         max_chans=8)
         elif run==2:
@@ -867,7 +896,21 @@ def get_run_params(run):
                         model_name='UNetQuarter',
                         do_nms = True,
                         testrepeat=0,
-                        testoutfrac=10,
+                        focal_loss_ag=(0.8,4.0),                # first 74 frames: (0.75, 4.)       
+                        dice_every_nth=1,
+                        batch_size=12,
+                        max_chans=96)
+        elif run==54:
+            params = Params(run, epochs = 100,
+                        comment = 'Test on Train -- to check train data',
+                        data_train='Eggs_train_23-03-28.h5', 
+                        data_validation='Eggs_validation_23-03-28.h5', 
+                        data_test='Eggs_test_large_23-03-28.h5',
+                        load_opt='last',
+                        load_run=None,
+                        model_name='UNetQuarter',
+                        do_nms = True,
+                        testrepeat=0,
                         focal_loss_ag=(0.8,4.0),                # first 74 frames: (0.75, 4.)       
                         dice_every_nth=1,
                         batch_size=12,

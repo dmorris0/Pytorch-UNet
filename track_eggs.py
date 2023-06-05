@@ -5,6 +5,9 @@
 
     Note: the video writing option uses OpenCV. This will need to be replaced with 
     another video writer (similar to run_video.py)
+    
+    Note: to write videos requires PyAV.  Install it with:
+      conda install av -c conda-forge
 '''
 import os
 import sys
@@ -13,7 +16,6 @@ from tqdm import tqdm
 import numpy as np
 import json
 import argparse
-import cv2 as cv
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 from timeit import default_timer as timer
@@ -25,8 +27,11 @@ from scipy.optimize import linear_sum_assignment
 from run_video import VideoReader
 from run_params import get_run_params
 
-sys.path.append(str( Path(__file__).parents[1] / 'pypackages' / 'imfolder'))
-from vidWrite import vidWrite
+import torch
+import torchvision
+torchvision.disable_beta_transforms_warning()
+from torchvision.io import write_video
+
 
 class egg_track:
     def __init__(self, id, fnum, score, x, y, minseq=5):        
@@ -103,8 +108,7 @@ class PlotTracksOnVideo:
                  show_annotations = False,
                  title=None, 
                  radius=12, 
-                 playrate=0,
-                 vid_file = None,
+                 store_frames = False,
                  start_frame = 0):
         self.reader = reader
         self.tracks = tracks
@@ -112,17 +116,16 @@ class PlotTracksOnVideo:
         self.show_annotations = show_annotations
         self.title = title
         self.radius = radius
-        self.playrate = playrate
         self.show_all_frames = False
         self.frames_since_lost = 0
         self.frame_no = start_frame-1
-        if vid_file is None:
-            self.vidwrite = None
+        self.store_frames = store_frames
+        if self.store_frames:
+            self.vidlist = []
         else:
-            print(f'Writing to video file: {vid_file}')
-            self.vidwrite = vidWrite(vid_file, fps=10, format='XVID')
+            self.vidlist = None
         self.fig = plt.figure(num='Egg Tracks', figsize=(6,3.38) )
-        if self.vidwrite is None:
+        if self.store_frames is None:
             self.ax = self.fig.add_subplot(1,1,1)
         else:
             self.ax = self.fig.add_axes([0,0,1,1])  # Cover figure with axes
@@ -154,22 +157,17 @@ class PlotTracksOnVideo:
             plt.close(self.fig)            
 
     def play_video(self):
-        if self.playrate==0:
-            return
-        else:
-            print(f'Playing video speedup: {self.playrate}')
         while self.plot_next( sim_mouse ) and not self.done:
             plt.show(block=False)
 
     def show_image(self):
-        ret, frame, _, _ = self.reader.get_nth(self.frame_no)
-        if not ret:
+        frame,_ = self.reader.get_nth(self.frame_no)
+        if frame is None:
             self.done = True
             plt.close(self.fig)
             return False
-        frame = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
         self.ax.cla()
-        self.ax.imshow(frame)
+        self.ax.imshow(frame.permute(1,2,0).numpy())
         self.ax.axis('off')
         return True
 
@@ -218,10 +216,9 @@ class PlotTracksOnVideo:
             #print(f'Frame {self.frame_no}, Tracks: {n}, Show: {show}, NF {self.frames_since_lost}')
             self.fig.canvas.draw()
             self.fig.canvas.flush_events()            
-            if show and not self.vidwrite is None:
-                mat = np.array(self.fig.canvas.renderer._renderer)
-                mat = cv.cvtColor(mat, cv.COLOR_RGB2BGR)
-                self.vidwrite.add(mat)
+            if show and self.store_frames:
+                mat = torch.tensor(np.array(self.fig.canvas.renderer._renderer)[:,:,:3])
+                self.vidlist.append(mat)
         return True
 
 def next_frame( egg_detections ):
@@ -284,7 +281,9 @@ def track_eggs( eggs_detections, params, big_value=1e10 ):
             # Get all detections that don't have good associations to tracks:       
             rest = [ele for ele in list(range(len(frame['scores']))) if ele not in set(col_ind[good])]
             for nt in rest:
-                tracks_current.append( egg_track(id,frame['fnum'],frame['scores'][nt], frame['x'][nt], frame['y'][nt], params.minseq))
+                # Only use a detection to start a track if score > 0
+                if frame['scores'][nt] >= 0:
+                    tracks_current.append( egg_track(id,frame['fnum'],frame['scores'][nt], frame['x'][nt], frame['y'][nt], params.minseq))
                 id += 1
         else:
             for nt in range(len(frame['scores'])):
@@ -321,7 +320,7 @@ def track_detections(args, prefix):
     run_dir = os.path.join(os.path.dirname(__file__), 'out_eggs', f'{params.run:03d}')
     vid_dir = os.path.join(run_dir,'video')
     if args.vidout:
-        vid_out_dir = os.path.join('/mnt/scratch/dmorris','vidout')
+        vid_out_dir = args.outfolder
         os.makedirs(vid_out_dir, exist_ok=True)
     else:
         vid_out_dir = None
@@ -329,7 +328,7 @@ def track_detections(args, prefix):
     search = prefix + '*.json'
     detections = list(Path(vid_dir).rglob(search))
     detections.sort()
-    vsearch = prefix + '*.mp4'
+    vsearch = prefix + '*.avi'
     videos = list(Path(args.folder).rglob(vsearch))
     videos.sort()
     video_names = [x.name for x in videos]
@@ -337,7 +336,7 @@ def track_detections(args, prefix):
     print(f'Found {len(detections)} files of type: {search}')
 
 
-    for path in detections:
+    for path, nextpath in zip(detections, detections[1:]+detections[-1:]):
         with open(str(path),'r') as f:
             eggs_detections = json.load(f)  # These are defined in run_video
             #vid_detect = {  'video': self.reader.name,
@@ -354,26 +353,30 @@ def track_detections(args, prefix):
         tracks = [x for x in tracks_d + tracks_c if len(x.score)>= args.minlen]
 
         annotations = load_annotations(path, args.images)
+        nextannotations = load_annotations(nextpath, args.images)
         print(f'Loaded {len(annotations)} annotations for {path.name}')
         if len(annotations)==0 or sum([len(x['targets']) for x in annotations])==0:
-            continue
+            #If no annotations in current frame, check if there are annotations in next video:
+            if len(nextannotations)==0 or sum([len(x['targets']) for x in nextannotations])==0:
+                #If none in next too, then skip tracking
+                continue
 
         if args.onvideo:
-            video = videos[video_names.index(path.name.replace('json','mp4'))]
+            video = videos[video_names.index(path.name.replace('json','avi'))]
             reader = VideoReader(str(video), 1)
             print(f'Video: {video.name}')
-            if not vid_out_dir is None:
-                vid_file = str(Path(vid_out_dir) / video.stem) + f'_{args.minlen}_{args.minseq}.avi'
-            else:
-                vid_file = None
             pt = PlotTracksOnVideo(reader, 
                                    tracks, 
                                    annotations, 
                                    show_annotations = args.showanno,
                                    title = f'Run: {params.run}, Radius: {params.radius}, Lost {params.lost_sec} (sec)',
-                                   playrate = args.playrate,
-                                   vid_file = vid_file,
+                                   store_frames = args.vidout,
                                    start_frame = args.start)     
+            if args.vidout:
+                vid_file = str(Path(vid_out_dir) / video.stem) + f'_{args.minlen}_{args.minseq}.avi'
+                print('Writing:',vid_file)
+                write_video(vid_file, torch.stack(pt.vidlist), fps=args.outfps )
+
             if pt.finished:
                 break     
         else:
@@ -387,21 +390,20 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Plot tracks on video')
     parser.add_argument('run', type=int, help='Run')
-    parser.add_argument('--folder', type=str, default='/mnt/research/3D_Vision_Lab/Hens/Hens/Hens_2021',  help='Folder for videos')    
-    parser.add_argument('--images', type=str, default='/mnt/research/3D_Vision_Lab/Hens/Hens/ImagesJPG',  help='Folder for images')        
+    parser.add_argument('--folder', type=str, default='/mnt/research/3D_Vision_Lab/Hens/Hens_2021_sec',  help='Folder for videos')    
+    parser.add_argument('--images', type=str, default='/mnt/research/3D_Vision_Lab/Hens/ImagesJPG',  help='Folder for images')        
     parser.add_argument('--prefix', type=str, nargs='+', default=[''],  help='search prefix')     
     parser.add_argument('--onvideo', action='store_true',  help='Plot on tracks on video')    
     parser.add_argument('--minlen', type=int, default=1, help='Minimum length of track (in observations)')
     parser.add_argument('--radius', type=float, default=50, help='Association radius')
     parser.add_argument('--lost', type=int, default=0, help='Seconds lost but still continue track')
     parser.add_argument('--minseq', type=int, default=5, help='Minimum sequential seconds for valid_start')
-    parser.add_argument('--playrate', type=float, default=0, help='How fast to play video in fps')
+    parser.add_argument('--outfps', type=float, default=5., help='How fast to play video in fps')
     parser.add_argument('--vidout', action='store_true',  help='Store video')    
+    parser.add_argument('--outfolder', type=str, default='/mnt/scratch/'+os.environ["USER"]+"/trackvid",  help='Output folder for video tracks')    
     parser.add_argument('--showanno', action='store_true',  help='Plot annotations')    
     parser.add_argument('--start', type=int, default=0, help='Start frame')
     
-    
-            
     args = parser.parse_args()
 
 
