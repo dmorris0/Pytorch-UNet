@@ -54,8 +54,10 @@ import torchvision.transforms.v2 as transforms
 
 from run_params import get_run_params, init_model
 
-image_path = str( Path(__file__).parents[1] / 'imagefunctions' ) 
+image_path = str( Path(__file__).parents[1] / 'imagefunctions' )
+hens_path = str( Path(__file__).parents[1] / 'imagefunctions' / 'hens')
 sys.path.append(image_path)
+sys.path.append(hens_path)
 from hens.heatmap_score import Peaks, MatchScore
 from hens.image_fun import up_scale_coords
 from hens.VideoIOtorch import VideoReader
@@ -241,6 +243,7 @@ def run_vid(args, prefix, delete_old_locks_min=10):
     params = get_run_params(args.run)
     min_val = args.minval
 
+    # Check if videos have already been computed
     if args.detectdir:
         os.makedirs(args.detectdir, exist_ok=True)
 
@@ -266,20 +269,13 @@ def run_vid(args, prefix, delete_old_locks_min=10):
 
     if args.detectdir:
         print(f'Storing detections in:  {args.detectdir}')
+
     nskip=0
     first = True
+    
     for path in videos:
-
-        out_name = os.path.join(args.detectdir, path.name.replace('.'+args.suffix,'.json') )
-        if os.path.exists(out_name):
-            nskip += 1
-            continue                
-        if nskip:
-            print(f'Skipping {nskip} completed videos')
-            nskip=0
-
+        # Only plotting (NO saving video)
         if not args.detectdir:                 
-            # Only plotting
             reader = VideoReader(str(path), sample_time_secs=1)
             pv = PlotVideo(reader, model, device, peaks, out_name=None, 
                            doplot=args.detectdir==None, 
@@ -289,8 +285,20 @@ def run_vid(args, prefix, delete_old_locks_min=10):
                 break       
             else:
                 continue
+        
+        out_name = os.path.join(args.detectdir, path.name.replace('.'+args.suffix,'.json') )
+
+        # Skip completed videos
+        if os.path.exists(out_name):
+            nskip += 1
+            continue         
+
+        if nskip:
+            print(f'Skipping {nskip} completed videos')
+            nskip=0
                    
         lock_name = out_name.replace('.json','.lock')
+
         # Delete old locks:
         if os.path.exists(lock_name) and (time.time() - os.stat(lock_name).st_mtime) / 60 > delete_old_locks_min:
             os.remove(lock_name) 
@@ -311,8 +319,6 @@ def run_vid(args, prefix, delete_old_locks_min=10):
         except Timeout:
             pass
             # print(f'Skipping {out_name} since locked')
-
-
 
 if __name__ == '__main__':
 

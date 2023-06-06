@@ -308,7 +308,7 @@ def track_eggs( eggs_detections, params, big_value=1e10 ):
 class track_params:
     def __init__(self,
                  run,
-                 radius = 50,   # radius to match
+                 radius = 50,       # Radius to match
                  lost_sec = 20,     # Time to lose a track
                  minseq = 5,
                  ):
@@ -325,7 +325,7 @@ def load_annotations(video_name, image_folder):
     return annotations
 
 def track_detections(args, prefix):
-
+    """General function to track detections in videos"""
     params = track_params(args.run, 
                           radius = args.radius, 
                           lost_sec = args.lost, 

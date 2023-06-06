@@ -25,7 +25,6 @@ import torchvision
 torchvision.disable_beta_transforms_warning()
 from torch.utils.data import DataLoader
 
-
 from evaluate_bce import evaluate_bce
 from plot_data import save_scores, plot_scores
 
