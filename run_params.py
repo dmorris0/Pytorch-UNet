@@ -900,7 +900,7 @@ def get_run_params(run):
                         dice_every_nth=1,
                         batch_size=12,
                         max_chans=96)
-        elif run==54:
+        elif run==55:
             params = Params(run, epochs = 100,
                         comment = 'Test on Train -- to check train data',
                         data_train='Eggs_train_23-03-28.h5', 

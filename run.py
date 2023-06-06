@@ -27,9 +27,8 @@ from torch.utils.data import DataLoader
 from evaluate_bce import evaluate_bce
 from plot_data import save_scores, plot_scores
 
-dirname = os.path.dirname(__file__)
-dataset_path = os.path.join( os.path.dirname(dirname), 'cvdemos', 'image')
-sys.path.append(dataset_path)
+image_path = str( Path(__file__).parents[1] / 'imagefunctions' / 'hens') 
+sys.path.append(image_path)
 from image_dataset2 import ImageData
 from synth_data import DrawData
 

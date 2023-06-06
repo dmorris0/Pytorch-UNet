@@ -390,8 +390,9 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Plot tracks on video')
     parser.add_argument('run', type=int, help='Run')
-    parser.add_argument('--folder', type=str, default='/mnt/research/3D_Vision_Lab/Hens/Hens_2021_sec',  help='Folder for videos')    
-    parser.add_argument('--images', type=str, default='/mnt/research/3D_Vision_Lab/Hens/ImagesJPG',  help='Folder for images')        
+    parser.add_argument('--videodir',  type=str, default='/mnt/research/3D_Vision_Lab/Hens/Hens_2021_sec',  help='Folder for videos')    
+    parser.add_argument('--detectdir', type=str, default=None,  help='Folder for detections (output of run_video.py)')    
+    parser.add_argument('--images', type=str, default='/mnt/research/3D_Vision_Lab/Hens/ImagesJPG',  help='Folder for images with annotations')        
     parser.add_argument('--prefix', type=str, nargs='+', default=[''],  help='search prefix')     
     parser.add_argument('--onvideo', action='store_true',  help='Plot on tracks on video')    
     parser.add_argument('--minlen', type=int, default=1, help='Minimum length of track (in observations)')

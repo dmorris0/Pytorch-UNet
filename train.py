@@ -34,13 +34,11 @@ import argparse
 import shutil
 
 from evaluate_bce import evaluate_bce
-from unet import UNetQuarter
 from plot_data import save_scores, read_scores, plot_scores
 from run_params import get_run_params, get_run_dirs, find_checkpoint, init_model
 
-dirname = os.path.dirname(__file__)
-dataset_path = os.path.join( os.path.dirname(dirname), 'cvdemos', 'image')
-sys.path.append(dataset_path)
+dirname = str( Path(__file__).parents[1] / 'imagefunctions' / 'hens') 
+sys.path.append(dirname)
 from image_dataset2 import ImageData
 from image_fun import boxes_to_centers, down_scale_coords
 from heatmap_score import Peaks, MatchScore

@@ -1,9 +1,16 @@
 ''' Run detector on videos.
 
     To run trained model 54 on camera ch3 and plot results (without saving)
-      python run_video.py 54 --prefix ch3 --loadmodel /mnt/research/3D_Vision_Lab/Hens/models/054_UNetQuarter.pth
-    To run trained model 54 on camera ch4 and save results:
-      python run_video.py 54 --prefix ch4 --save --loadmodel /mnt/research/3D_Vision_Lab/Hens/models/054_UNetQuarter.pth
+      python run_video.py 54 \
+          --prefix ch3 \
+          --loadmodel /mnt/research/3D_Vision_Lab/Hens/models/054_UNetQuarter.pth \
+          --inputdir /mnt/research/3D_Vision_Lab/Hens/Hens_2021_sec \
+    To run trained model 54 on camera ch4 videos from 23/07/30 and save results to output dir:
+      python run_video.py 54 \
+          --prefix ch4_0730 \
+          --loadmodel /mnt/research/3D_Vision_Lab/Hens/models/054_UNetQuarter.pth \
+          --inputdir /mnt/research/3D_Vision_Lab/Hens/Hens_2021_sec \
+          --outputdir /mnt/scratch/dmorris/Hens_Detections_054
     It will run recursively on the video folder finding all videos from these cameras.  
 
     --minval <val> is the threshold on whether a peak is returned as a detection.  A detection with value 0
@@ -42,46 +49,12 @@ import torchvision.transforms.v2 as transforms
 
 from run_params import get_run_params, init_model
 
-dirname = os.path.dirname(__file__)
-dataset_path = os.path.join( os.path.dirname(dirname), 'cvdemos', 'image')
-sys.path.append(dataset_path)
+image_path = str( Path(__file__).parents[1] / 'imagefunctions' / 'hens') 
+sys.path.append(image_path)
 from heatmap_score import Peaks, MatchScore
 from image_fun import up_scale_coords
+from VideoIOtorch import VideoReader
 
-
-class VideoReader:
-    def __init__(self, filename, sample_time_secs):
-        self.name = filename
-        self.cap = torchvision.io.VideoReader(filename, "video")
-        info = self.cap.get_metadata()
-        self.sample_time_secs = sample_time_secs 
-        self.fps = info['video']['fps'][0]
-        self.skip = int(round(self.fps * self.sample_time_secs))
-        self.nsamp = 1 + int((info['video']['duration'][0]-1/self.fps)/self.sample_time_secs)     
-        self.index = -1
-
-    def get_next(self):        
-        try:
-            if self.index >= 0:
-                for _ in range(self.skip-1):
-                    next(self.cap)
-            data = next(self.cap)
-            self.index += 1
-            return data['data'], int(round(data['pts']*self.fps))
-        except StopIteration:
-            return None, None
-
-    def get_nth(self, nth):
-        try:
-            self.cap.seek(nth*self.sample_time_secs)
-            data = next(self.cap)
-            self.index = nth
-            return data['data'], int(round(data['pts']*self.fps))        
-        except StopIteration:
-            return None, None
-        
-    def __len__(self):
-        return self.nsamp
 
 to_float = transforms.Compose(
             [
@@ -97,7 +70,7 @@ class PlotVideo:
                  device, 
                  peaks, 
                  out_name=None, # If None, then waits for mouse click to go to next frame
-                 noplot=False, 
+                 doplot=True, 
                  radius=12, 
                  figname='Camera', 
                  nms_proximity=0):
@@ -118,7 +91,7 @@ class PlotVideo:
         self.annotations = None
 
         self.out_name = out_name
-        self.noplot = noplot
+        self.doplot = doplot
         if self.out_name is None:
             print(f'''
     Will stop for detections >= minval: {self.peaks.min_val}
@@ -158,7 +131,7 @@ class PlotVideo:
                 indices = indices + [self.inc]*self.peak_vals.size
                 x = x + self.imcoords[:,0].tolist()
                 y = y + self.imcoords[:,1].tolist()            
-            if not self.noplot:
+            if self.doplot:
                 self.plot()
                 plt.show(block=False)
         total_time = timer() - start_time
@@ -245,10 +218,10 @@ class PlotVideo:
 
 def are_we_already_done(args, out_dir, prefix):
     ''' Return True if completed all videos '''
-    if not args.save:
+    if not args.outputdir:
         return False
     search = prefix + '*.' + args.suffix
-    for path in Path(args.folder).rglob(search):
+    for path in Path(args.inputdir).rglob(search):
         out_name = os.path.join(out_dir, path.name.replace('.'+args.suffix,'.json') )
         if not os.path.exists(out_name):
             return False
@@ -263,13 +236,12 @@ def run_vid(args, prefix, delete_old_locks_min=10):
     params = get_run_params(args.run)
     min_val = args.minval
 
-    run_dir = os.path.join(os.path.dirname(__file__), params.output_dir, f'{params.run:03d}')
-    out_dir = os.path.join(run_dir,'video')
-    os.makedirs(out_dir, exist_ok=True)
+    if args.outputdir:
+        os.makedirs(args.outputdir, exist_ok=True)
 
-    if are_we_already_done(args, out_dir, prefix):
-        print(f'Already completed all videos of type: {prefix}*.{args.suffix}, so quitting')
-        return True
+        if are_we_already_done(args, args.outputdir, prefix):
+            print(f'Already completed all videos of type: {prefix}*.{args.suffix}, so quitting')
+            return True
 
     # If we don't specify a loadmodel, then want to always load the best checkpoint (rather than last checkpoint)
     params.load_opt = 'best'
@@ -279,22 +251,21 @@ def run_vid(args, prefix, delete_old_locks_min=10):
     peaks = Peaks(1, device, min_val=min_val)
 
     search = prefix + '*.' + args.suffix
-    videos = list(Path(args.folder).rglob(search))
+    videos = list(Path(args.inputdir).rglob(search))
     videos.sort()
 
     print(f'Device:                 {device}')
-    print(f'Video folder:           {args.folder}')
+    print(f'Input Video folder:     {args.inputdir}')
     print(f'Number of videos:       {len(videos)} of type: {search}')
     print(f'Min peaks for detecion: {min_val}')    
 
-    out_name = None
-    if args.save:
-        print(f'Storing detections in:  {out_dir}')
+    if args.outputdir:
+        print(f'Storing detections in:  {args.outputdir}')
     nskip=0
     first = True
     for path in videos:
 
-        out_name = os.path.join(out_dir, path.name.replace('.'+args.suffix,'.json') )
+        out_name = os.path.join(args.outputdir, path.name.replace('.'+args.suffix,'.json') )
         if os.path.exists(out_name):
             nskip += 1
             continue                
@@ -302,10 +273,13 @@ def run_vid(args, prefix, delete_old_locks_min=10):
             print(f'Skipping {nskip} completed videos')
             nskip=0
 
-        if not args.save:                 
+        if not args.outputdir:                 
             # Only plotting
             reader = VideoReader(str(path), sample_time_secs=1)
-            pv = PlotVideo(reader, model, device, peaks, out_name=None, noplot=args.save, figname=f'Cam {prefix}', nms_proximity=args.nms)
+            pv = PlotVideo(reader, model, device, peaks, out_name=None, 
+                           doplot=args.outputdir==None, 
+                           figname=f'Cam {prefix}', 
+                           nms_proximity=args.nms)
             if not pv.next_video:
                 break       
             else:
@@ -323,7 +297,10 @@ def run_vid(args, prefix, delete_old_locks_min=10):
                     print(f'Starting with {len(reader)} frames from {reader.name}')
                     first = False
 
-                pv = PlotVideo(reader, model, device, peaks, out_name=out_name, noplot=args.save, figname=f'Cam {prefix}', nms_proximity=args.nms)
+                pv = PlotVideo(reader, model, device, peaks, out_name=out_name, 
+                               doplot=args.outputdir==None, 
+                               figname=f'Cam {prefix}', 
+                               nms_proximity=args.nms)
                 if not pv.next_video:
                     break
         except Timeout:
@@ -339,15 +316,15 @@ if __name__ == '__main__':
     parser.add_argument('--loadmodel', type=str, default=None,  help='Load a specified model name in models folder -- overrides model specified in params')
     parser.add_argument('--suffix', type=str, default='avi',    help='Video suffix')
     parser.add_argument('--minval', type=float, default=-0.5,  help='Minimum peak value for detection')      
-    parser.add_argument('--folder', type=str, default='/mnt/research/3D_Vision_Lab/Hens/Hens_2021_sec',  help='Folder for videos')    
     parser.add_argument('--prefix', type=str, nargs='+', default='',  help='Select camera(s) with this, ex: ch1 ch2 will do cams 1 and 2')     
     parser.add_argument('--nms', type=float, default=12.,  help='Do NMS for 12 pixels')      
-    parser.add_argument('--save', action='store_true',  help='Save detections')            
+    parser.add_argument('--inputdir', type=str, default="/mnt/research/3D_Vision-Lab/Hens/Hens_2021_sec",  help='Input folder')
+    parser.add_argument('--outputdir', type=str, default=None,  help='Output folder.  If None, then does not save detections')
     args = parser.parse_args()
 
     # ** Multiple threads do not work right now.  Just use a single --prefix **
 
-    if len(args.prefix)>1 and args.save:
+    if len(args.prefix)>1 and args.outputdir:
         print(f'Running separate threads for prefixes: {args.prefix}')
         # do multiple threads when not plotting
         threads = []  # 1 thread per prefix
@@ -360,7 +337,6 @@ if __name__ == '__main__':
         for t in threads:
             t.join()  #wait for all threads to complete
     else:
-        print('Running single thread')
         if len(args.prefix):
             for prefix in args.prefix:
                 run_vid(args,prefix)

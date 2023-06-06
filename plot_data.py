@@ -117,15 +117,15 @@ def plot_scores(train_scores, val_scores, run, filename=None, comment=''):
 if __name__=="__main__":
     
     import sys
-    dirname = os.path.dirname(__file__)
-    dataset_path = os.path.join( os.path.dirname(dirname), 'cvdemos', 'image')
-    sys.path.append(dataset_path)
+    image_path = str( Path(__file__).parents[1] / 'imagefunctions' / 'hens') 
+    sys.path.append(image_path)
     from synth_data import DrawData
 
     parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
     parser.add_argument('--run', type=int, default=None,     help='Run number to plot training convergence')
     parser.add_argument('--testdir', type=str, default=None, help="Output folder from run.py containing image.h5 etc.")
     parser.add_argument('--skiptp', action='store_true',     help="Skip images with only True Positives")
+    parser.add_argument('--minval', type=float, default=None,  help="Override min_val from run if not None")
 
 
     args = parser.parse_args()
@@ -162,7 +162,7 @@ if __name__=="__main__":
 
         outname = os.path.join(args.testdir,f'images.h5')
         if os.path.exists(outname):
-            dd = DrawData(outname, recalc_scores=True, do_nms = True, skiptp = args.skiptp)
+            dd = DrawData(outname, recalc_scores=True, do_nms = True, skiptp = args.skiptp, set_min_val = args.minval)
             dd.plot()
         else:
             plt.show()

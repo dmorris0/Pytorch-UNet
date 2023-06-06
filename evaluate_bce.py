@@ -6,8 +6,9 @@ from tqdm import tqdm
 import numpy as np
 import h5py, json
 from timeit import default_timer as timer
+from pathlib import Path
 import sys, os
-image_path = os.path.join( os.path.dirname(os.path.dirname(__file__)), 'cvdemos', 'image') 
+image_path = str( Path(__file__).parents[1] / 'imagefunctions' / 'hens') 
 sys.path.append(image_path)
 from heatmap_score import Peaks, MatchScore
 from image_fun import boxes_to_centers, down_scale_coords
