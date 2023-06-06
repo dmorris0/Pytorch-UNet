@@ -1,17 +1,20 @@
 ''' Run detector on videos.
 
-    To run trained model 54 on camera ch3 and plot results (without saving)
+    To run trained model 54 on camera ch3 and plot results (without saving).
       python run_video.py 54 \
           --prefix ch3 \
           --loadmodel /mnt/research/3D_Vision_Lab/Hens/models/054_UNetQuarter.pth \
-          --inputdir /mnt/research/3D_Vision_Lab/Hens/Hens_2021_sec \
-    To run trained model 54 on camera ch4 videos from 23/07/30 and save results to output dir:
+          --inputdir /mnt/research/3D_Vision_Lab/Hens/Hens_2021_sec
+
+    It will run recursively on inputdir finding all videos from these cameras.  
+    Running and plotting is slower than below with just saving results:
+          
+    To run trained model 54 on camera ch4 videos from 23/07/30 and save results to detectdir:
       python run_video.py 54 \
           --prefix ch4_0730 \
           --loadmodel /mnt/research/3D_Vision_Lab/Hens/models/054_UNetQuarter.pth \
           --inputdir /mnt/research/3D_Vision_Lab/Hens/Hens_2021_sec \
-          --outputdir /mnt/scratch/dmorris/Hens_Detections_054
-    It will run recursively on the video folder finding all videos from these cameras.  
+          --detectdir /mnt/scratch/dmorris/Hens_Detections_054
 
     --minval <val> is the threshold on whether a peak is returned as a detection.  A detection with value 0
         has probability of sigmoid(0) = 0.5  This ia a good value for a confident detection.    
@@ -22,6 +25,8 @@
     process in about 1 minute.  (Far better than on a CPU)
     
     After this is run on videos, tracks can be made with: track_eggs.py
+
+    Daniel Morris, 2023
 
 '''
 
@@ -49,11 +54,11 @@ import torchvision.transforms.v2 as transforms
 
 from run_params import get_run_params, init_model
 
-image_path = str( Path(__file__).parents[1] / 'imagefunctions' / 'hens') 
+image_path = str( Path(__file__).parents[1] / 'imagefunctions' ) 
 sys.path.append(image_path)
-from heatmap_score import Peaks, MatchScore
-from image_fun import up_scale_coords
-from VideoIOtorch import VideoReader
+from hens.heatmap_score import Peaks, MatchScore
+from hens.image_fun import up_scale_coords
+from hens.VideoIOtorch import VideoReader
 
 
 to_float = transforms.Compose(
@@ -218,7 +223,7 @@ class PlotVideo:
 
 def are_we_already_done(args, out_dir, prefix):
     ''' Return True if completed all videos '''
-    if not args.outputdir:
+    if not args.detectdir:
         return False
     search = prefix + '*.' + args.suffix
     for path in Path(args.inputdir).rglob(search):
@@ -236,10 +241,10 @@ def run_vid(args, prefix, delete_old_locks_min=10):
     params = get_run_params(args.run)
     min_val = args.minval
 
-    if args.outputdir:
-        os.makedirs(args.outputdir, exist_ok=True)
+    if args.detectdir:
+        os.makedirs(args.detectdir, exist_ok=True)
 
-        if are_we_already_done(args, args.outputdir, prefix):
+        if are_we_already_done(args, args.detectdir, prefix):
             print(f'Already completed all videos of type: {prefix}*.{args.suffix}, so quitting')
             return True
 
@@ -259,13 +264,13 @@ def run_vid(args, prefix, delete_old_locks_min=10):
     print(f'Number of videos:       {len(videos)} of type: {search}')
     print(f'Min peaks for detecion: {min_val}')    
 
-    if args.outputdir:
-        print(f'Storing detections in:  {args.outputdir}')
+    if args.detectdir:
+        print(f'Storing detections in:  {args.detectdir}')
     nskip=0
     first = True
     for path in videos:
 
-        out_name = os.path.join(args.outputdir, path.name.replace('.'+args.suffix,'.json') )
+        out_name = os.path.join(args.detectdir, path.name.replace('.'+args.suffix,'.json') )
         if os.path.exists(out_name):
             nskip += 1
             continue                
@@ -273,11 +278,11 @@ def run_vid(args, prefix, delete_old_locks_min=10):
             print(f'Skipping {nskip} completed videos')
             nskip=0
 
-        if not args.outputdir:                 
+        if not args.detectdir:                 
             # Only plotting
             reader = VideoReader(str(path), sample_time_secs=1)
             pv = PlotVideo(reader, model, device, peaks, out_name=None, 
-                           doplot=args.outputdir==None, 
+                           doplot=args.detectdir==None, 
                            figname=f'Cam {prefix}', 
                            nms_proximity=args.nms)
             if not pv.next_video:
@@ -298,7 +303,7 @@ def run_vid(args, prefix, delete_old_locks_min=10):
                     first = False
 
                 pv = PlotVideo(reader, model, device, peaks, out_name=out_name, 
-                               doplot=args.outputdir==None, 
+                               doplot=args.detectdir==None, 
                                figname=f'Cam {prefix}', 
                                nms_proximity=args.nms)
                 if not pv.next_video:
@@ -319,12 +324,12 @@ if __name__ == '__main__':
     parser.add_argument('--prefix', type=str, nargs='+', default='',  help='Select camera(s) with this, ex: ch1 ch2 will do cams 1 and 2')     
     parser.add_argument('--nms', type=float, default=12.,  help='Do NMS for 12 pixels')      
     parser.add_argument('--inputdir', type=str, default="/mnt/research/3D_Vision-Lab/Hens/Hens_2021_sec",  help='Input folder')
-    parser.add_argument('--outputdir', type=str, default=None,  help='Output folder.  If None, then does not save detections')
+    parser.add_argument('--detectdir', type=str, default=None,  help='Output folder.  If None, then does not save detections')
     args = parser.parse_args()
 
     # ** Multiple threads do not work right now.  Just use a single --prefix **
 
-    if len(args.prefix)>1 and args.outputdir:
+    if len(args.prefix)>1 and args.detectdir:
         print(f'Running separate threads for prefixes: {args.prefix}')
         # do multiple threads when not plotting
         threads = []  # 1 thread per prefix

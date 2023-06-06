@@ -8,10 +8,10 @@ import h5py, json
 from timeit import default_timer as timer
 from pathlib import Path
 import sys, os
-image_path = str( Path(__file__).parents[1] / 'imagefunctions' / 'hens') 
+image_path = str( Path(__file__).parents[1] / 'imagefunctions' ) 
 sys.path.append(image_path)
-from heatmap_score import Peaks, MatchScore
-from image_fun import boxes_to_centers, down_scale_coords
+from hens.heatmap_score import Peaks, MatchScore
+from hens.image_fun import boxes_to_centers, down_scale_coords
 
 class SaveResults:
 

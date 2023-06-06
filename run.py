@@ -4,13 +4,15 @@
                 --outfrac 5 \
                 --loadmodel /mnt/research/3D_Vision_Lab/Hens/models/054_UNetQuarter.pth \
                 --inputfile /mnt/research/3D_Vision_Lab/Hens/eggs/Eggs_ch1_23-06-04.h5 \
-                --outputdir /mnt/scratch/dmorris/testruns/Eggs_ch1_23-06-04
+                --runoutdir /mnt/scratch/dmorris/testruns/Eggs_ch1_23-06-04
     Gets parameters from run 54 using get_run_params()
     Loads model: 054_UNetQuarter.pth, which must match parameters in run 54
     if <num> in --outfrac <num> is > 0 (default), then saves images and heatmaps in output folder.
-    Saves 1/<num> of the input images.  Ex. 10 will save 1/10 of input images in outputdir.
+    Saves 1/<num> of the input images.  Ex. 10 will save 1/10 of input images in runoutdir.
 
     Afterwards, use plot_data.py to plot the output detections and heatmaps (if --outfrac is set)
+    
+    Daniel Morris, 2023
 '''
 import os
 import sys
@@ -27,10 +29,10 @@ from torch.utils.data import DataLoader
 from evaluate_bce import evaluate_bce
 from plot_data import save_scores, plot_scores
 
-image_path = str( Path(__file__).parents[1] / 'imagefunctions' / 'hens') 
+image_path = str( Path(__file__).parents[1] / 'imagefunctions') 
 sys.path.append(image_path)
-from image_dataset2 import ImageData
-from synth_data import DrawData
+from hens.image_dataset2 import ImageData
+from hens.synth_data import DrawData
 
 from run_params import get_run_params, init_model
 from train import get_criterion
@@ -41,7 +43,7 @@ def run_model(
         params,
         outfrac,
         inputfile,
-        outputdir):
+        runoutdir):
 
     if inputfile is None:
         inputfile = os.path.join(params.data_dir, params.data_test)
@@ -61,10 +63,10 @@ def run_model(
                              collate_fn=lambda batch: tuple(zip(*batch)), 
                              **loader_args)
 
-    if outputdir is None:
-        outputdir = os.path.join(os.path.dirname(__file__), params.output_dir, f'{params.run:03d}',Path(inputfile).stem)
-    os.makedirs(outputdir, exist_ok=True)
-    outname = os.path.join(outputdir,f'images.h5')
+    if runoutdir is None:
+        runoutdir = os.path.join(os.path.dirname(__file__), params.output_dir, f'{params.run:03d}',Path(inputfile).stem)
+    os.makedirs(runoutdir, exist_ok=True)
+    outname = os.path.join(runoutdir,f'images.h5')
 
     # Find positive weights for single-pixel positives:
     criterion = get_criterion(params)
@@ -77,7 +79,7 @@ def run_model(
 
     testscores = np.concatenate( ((0,test_loss,),scores) ) 
 
-    save_scores(os.path.join(outputdir, "test_scores.csv"), testscores)
+    save_scores(os.path.join(runoutdir, "test_scores.csv"), testscores)
 
     print(f'To see plots again run: python plot_data.py {params.run} --test')
     if params.testoutfrac:
@@ -89,7 +91,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run the trained model')
     parser.add_argument('runlist', type=int, nargs='+',  help='List of runs')
     parser.add_argument('--inputfile', type=str, default=None,  help='Input .h5 data filename including full path. (Assumes .json too).  In None, then finds it from params')
-    parser.add_argument('--outputdir', type=str, default=None,  help='Output folder.  In None, then finds name from params')
+    parser.add_argument('--runoutdir', type=str, default=None,  help='Output folder for detections.  In None, then finds name from params')
     parser.add_argument('--outfrac', type=int, default=0,    help='Saves 1/outfrac of the image results (ex: 10 will save 1/10 images), 0 means none saved')
     parser.add_argument('--loadmodel', type=str, default=None,  help='Load a specified model name -- overrides model specified in params')
     
@@ -115,6 +117,6 @@ if __name__ == '__main__':
             params    = params,
             outfrac   = args.outfrac,
             inputfile = args.inputfile,
-            outputdir = args.outputdir,
+            runoutdir = args.runoutdir,
             )
         

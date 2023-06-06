@@ -4,7 +4,9 @@
       python plot_data.py --run 54
 
     To show saved image detection results from run.py:
-      python plot_data.py --testdir /mnt/scratch/dmorris/testruns/Eggs_ch1_23-06-04
+      python plot_data.py --runoutdir /mnt/scratch/dmorris/testruns/Eggs_ch1_23-06-04
+
+    Daniel Morris, 2023
 
 '''
 import argparse
@@ -117,13 +119,13 @@ def plot_scores(train_scores, val_scores, run, filename=None, comment=''):
 if __name__=="__main__":
     
     import sys
-    image_path = str( Path(__file__).parents[1] / 'imagefunctions' / 'hens') 
+    image_path = str( Path(__file__).parents[1] / 'imagefunctions') 
     sys.path.append(image_path)
-    from synth_data import DrawData
+    from hens.synth_data import DrawData
 
     parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
     parser.add_argument('--run', type=int, default=None,     help='Run number to plot training convergence')
-    parser.add_argument('--testdir', type=str, default=None, help="Output folder from run.py containing image.h5 etc.")
+    parser.add_argument('--runoutdir', type=str, default=None, help="Output folder from run.py containing image.h5 etc.")
     parser.add_argument('--skiptp', action='store_true',     help="Skip images with only True Positives")
     parser.add_argument('--minval', type=float, default=None,  help="Override min_val from run if not None")
 
@@ -146,11 +148,11 @@ if __name__=="__main__":
         plot_scores(tscores, vscores, args.run, outpng, comment = params.comment)    
 
         shutil.copy2(outpng, dir_plot)
-        if not args.testdir:
+        if not args.runoutdir:
             plt.show()
 
-    if args.testdir:
-        test_scores = read_scores(os.path.join(args.testdir,"test_scores.csv"))
+    if args.runoutdir:
+        test_scores = read_scores(os.path.join(args.runoutdir,"test_scores.csv"))
         scores = test_scores[0,2:].round().astype(int)
         dice = 2*scores[0] / (scores[0]+scores.sum()+1e-3)
         precision = scores[0]/ (scores[0]+scores[1]+1e-3)
@@ -160,7 +162,7 @@ if __name__=="__main__":
         print(f'Dice: {dice:.3}, Precision: {precision:.3}, Recall: {recall:.3}')
         print('='*80)
 
-        outname = os.path.join(args.testdir,f'images.h5')
+        outname = os.path.join(args.runoutdir,f'images.h5')
         if os.path.exists(outname):
             dd = DrawData(outname, recalc_scores=True, do_nms = True, skiptp = args.skiptp, set_min_val = args.minval)
             dd.plot()

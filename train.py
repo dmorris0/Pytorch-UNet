@@ -28,20 +28,19 @@ from torch import optim
 from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 import numpy as np
-import platform
 import json
 import argparse
 import shutil
 
 from evaluate_bce import evaluate_bce
 from plot_data import save_scores, read_scores, plot_scores
-from run_params import get_run_params, get_run_dirs, find_checkpoint, init_model
+from run_params import get_run_params, get_run_dirs, init_model
 
-dirname = str( Path(__file__).parents[1] / 'imagefunctions' / 'hens') 
+dirname = str( Path(__file__).parents[1] / 'imagefunctions' ) 
 sys.path.append(dirname)
-from image_dataset2 import ImageData
-from image_fun import boxes_to_centers, down_scale_coords
-from heatmap_score import Peaks, MatchScore
+from hens.image_dataset2 import ImageData
+from hens.image_fun import boxes_to_centers, down_scale_coords
+from hens.heatmap_score import Peaks, MatchScore
 
 
 def get_criterion(params, pos_weight = torch.Tensor([1.])):

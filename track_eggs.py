@@ -1,11 +1,18 @@
 ''' Track eggs on video detections (made by run_video.py)
 
-    Example usage on videos from camera 4 from 07/28/2020:
-      python track_eggs.py 54 --prefix ch4_0728 --minseq 5 --minlen 2
+    Example usage on video detections on camera 4 from 07/30/2020:
+      python track_eggs.py 54 --prefix ch4_0730 --minseq 5 --minlen 2 \
+          --videodir /mnt/research/3D_Vision_Lab/Hens/Hens_2021_sec \
+          --imagedir /mnt/research/3D_Vision_Lab/Hens/ImagesJPG \
+          --detectdir /mnt/scratch/dmorris/Hens_Detections_054 \
+          --onvideo
 
-    Note: the video writing option uses OpenCV. This will need to be replaced with 
-    another video writer (similar to run_video.py)
-    
+    The --onvideo option will plot tracks on video.  Without this, will 
+    plot all tracks for whole video on the first frame.  
+
+    To save output as a video include the option (requires --onvideo option):
+          --vidtrackdir /mnt/scratch/dmorris/trackvid
+
     Note: to write videos requires PyAV.  Install it with:
       conda install av -c conda-forge
 '''
@@ -24,14 +31,14 @@ from time import sleep
 from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
 
-from run_video import VideoReader
-from run_params import get_run_params
-
 import torch
 import torchvision
 torchvision.disable_beta_transforms_warning()
 from torchvision.io import write_video
 
+image_path = str( Path(__file__).parents[1] / 'imagefunctions' ) 
+sys.path.append(image_path)
+from hens.VideoIOtorch import VideoReader
 
 class egg_track:
     def __init__(self, id, fnum, score, x, y, minseq=5):        
@@ -75,22 +82,26 @@ class egg_track:
             ax.add_patch(circ)
         # ax.text(self.x[ind]+10, self.y[ind], str(len(self.score)), color=color, fontsize=12)
 
-def plot_all_tracks(tracks, annotations, title=None, radius=None):
+def plot_all_tracks(tracks, annotations, frame=None, title=None, radius=None):
     fig = plt.figure(num='Egg Tracks', figsize=(8,4) )
     ax = fig.add_subplot(1,1,1)
+    if not frame is None:
+        ax.imshow(frame.permute(1,2,0).numpy())
     for track in tracks:
         color = next(ax._get_lines.prop_cycler)['color']
         track.plot(ax, vis_color=color, nonvis_color=color, radius=radius)
     ax.set_xlabel(r'$x$', labelpad=6)            
     ax.set_ylabel(r'$y$', labelpad=6)            
-    ax.invert_yaxis()
+    #ax.invert_yaxis()
     ax.axis('equal')
     ax.set_title(title)
-    ax.set_xlim( (0,1920))
-    ax.set_ylim( (1080,0))
+    if frame is None:
+        ax.set_xlim( (0,1920))
+        ax.set_ylim( (1080,0))
     for anno in annotations:
         for t in anno['targets']:
-            ax.plot(t[0],t[1],marker='o',markersize=20,color='k',fillstyle='none')
+            ax.plot(t[0],t[1],marker='o',markersize=20,color='w',fillstyle='none')
+    ax.axis('tight')
 
 class my_event:
     ''' This is an alternative to mouse input '''
@@ -133,8 +144,9 @@ class PlotTracksOnVideo:
         self.fig.canvas.mpl_connect('key_press_event', self.key_press)
         self.done = False
         self.finished = False
+        print('** Press "q" to quit video  **')   
         self.plot_next( None )
-        self.play_video()        
+        self.play_video()     
         plt.show()
 
     def fill_annotation_list(self, annotations):
@@ -143,7 +155,8 @@ class PlotTracksOnVideo:
             for t in anno['targets']:
                 anno_list.append(t)
         self.anno_list = anno_list
-        print(f'Annotations for video: {self.anno_list}')
+        #print(f'Loaded {len(self.anno_list)} egg annotations for video')
+        #print(f'Annotations for video: {self.anno_list}')
 
     def is_annotated(self, xy, radius):
         match = [np.sqrt((xy[0]-t[0])**2 + (xy[1]-t[1])**2) < radius for t in self.anno_list]
@@ -207,13 +220,14 @@ class PlotTracksOnVideo:
                 self.frames_since_lost = 0
                 if self.show_annotations:
                     for t in self.anno_list:
-                        self.ax.plot(t[0],t[1],marker='o',markersize=20,color='k',fillstyle='none')
+                        self.ax.plot(t[0],t[1],marker='o',markersize=20,color='w',fillstyle='none')
             else:
                 if self.frames_since_lost < 10:
                     show = self.show_image()   
                 self.frames_since_lost += 1                
             self.ax.set_title(f'{self.title} Frame: {self.frame_no}, Tracks: {n}')
             #print(f'Frame {self.frame_no}, Tracks: {n}, Show: {show}, NF {self.frames_since_lost}')
+            self.ax.axis('off')
             self.fig.canvas.draw()
             self.fig.canvas.flush_events()            
             if show and self.store_frames:
@@ -317,24 +331,20 @@ def track_detections(args, prefix):
                           lost_sec = args.lost, 
                           minseq = args.minseq)
 
-    run_dir = os.path.join(os.path.dirname(__file__), 'out_eggs', f'{params.run:03d}')
-    vid_dir = os.path.join(run_dir,'video')
-    if args.vidout:
-        vid_out_dir = args.outfolder
-        os.makedirs(vid_out_dir, exist_ok=True)
-    else:
-        vid_out_dir = None
-
+    # find all detections from run_video.py:
     search = prefix + '*.json'
-    detections = list(Path(vid_dir).rglob(search))
+    detections = list(Path(args.detectdir).rglob(search))
     detections.sort()
     vsearch = prefix + '*.avi'
-    videos = list(Path(args.folder).rglob(vsearch))
+    videos = list(Path(args.videodir).rglob(vsearch))
     videos.sort()
     video_names = [x.name for x in videos]
 
     print(f'Found {len(detections)} files of type: {search}')
 
+    if args.vidtrackdir:
+        # Create output folder:
+        os.makedirs(args.vidtrackdir, exist_ok=True)
 
     for path, nextpath in zip(detections, detections[1:]+detections[-1:]):
         with open(str(path),'r') as f:
@@ -352,35 +362,39 @@ def track_detections(args, prefix):
         # keep tracks of minimum length:
         tracks = [x for x in tracks_d + tracks_c if len(x.score)>= args.minlen]
 
-        annotations = load_annotations(path, args.images)
-        nextannotations = load_annotations(nextpath, args.images)
+        annotations = load_annotations(path, args.imagedir)
         print(f'Loaded {len(annotations)} annotations for {path.name}')
-        if len(annotations)==0 or sum([len(x['targets']) for x in annotations])==0:
-            #If no annotations in current frame, check if there are annotations in next video:
-            if len(nextannotations)==0 or sum([len(x['targets']) for x in nextannotations])==0:
-                #If none in next too, then skip tracking
-                continue
+        #nextannotations = load_annotations(nextpath, args.imagedir)
+        #if len(annotations)==0 or sum([len(x['targets']) for x in annotations])==0:
+        #    #If no annotations in current frame, check if there are annotations in next video:
+        #    if len(nextannotations)==0 or sum([len(x['targets']) for x in nextannotations])==0:
+        #        #If none in next too, then skip tracking
+        #        continue
 
-        if args.onvideo:
-            video = videos[video_names.index(path.name.replace('json','avi'))]
-            reader = VideoReader(str(video), 1)
-            print(f'Video: {video.name}')
+        video = videos[video_names.index(path.name.replace('json','avi'))]
+        reader = VideoReader(str(video), 1)
+        #print(f'Video for tracking: {video.name}')
+            
+        if args.onvideo: 
             pt = PlotTracksOnVideo(reader, 
                                    tracks, 
                                    annotations, 
-                                   show_annotations = args.showanno,
-                                   title = f'Run: {params.run}, Radius: {params.radius}, Lost {params.lost_sec} (sec)',
-                                   store_frames = args.vidout,
+                                   show_annotations = not args.hideanno,
+                                   title = f'{video.name}, Radius: {params.radius}, Lost {params.lost_sec} (sec)',
+                                   store_frames = args.vidtrackdir,
                                    start_frame = args.start)     
-            if args.vidout:
-                vid_file = str(Path(vid_out_dir) / video.stem) + f'_{args.minlen}_{args.minseq}.avi'
+            if args.vidtrackdir:
+                vid_file = str(Path(args.vidtrackdir) / video.stem) + f'_{args.minlen}_{args.minseq}.avi'
                 print('Writing:',vid_file)
                 write_video(vid_file, torch.stack(pt.vidlist), fps=args.outfps )
 
             if pt.finished:
                 break     
         else:
-            plot_all_tracks(tracks, annotations, f'Tracks run: {params.run}, Radius: {params.radius}, Lost {params.lost_sec} (sec)')
+            # Plot tracks on first frame of video:
+            frame, _ = reader.get_next()
+            plot_all_tracks(tracks, annotations, frame,
+                            f'Tracks run: {params.run}, Radius: {params.radius}, Lost {params.lost_sec} (sec)', )
 
             plt.show()
             #plt.savefig('temp.png')
@@ -392,17 +406,16 @@ if __name__ == '__main__':
     parser.add_argument('run', type=int, help='Run')
     parser.add_argument('--videodir',  type=str, default='/mnt/research/3D_Vision_Lab/Hens/Hens_2021_sec',  help='Folder for videos')    
     parser.add_argument('--detectdir', type=str, default=None,  help='Folder for detections (output of run_video.py)')    
-    parser.add_argument('--images', type=str, default='/mnt/research/3D_Vision_Lab/Hens/ImagesJPG',  help='Folder for images with annotations')        
+    parser.add_argument('--imagedir', type=str, default='/mnt/research/3D_Vision_Lab/Hens/ImagesJPG',  help='Folder for images with annotations')        
     parser.add_argument('--prefix', type=str, nargs='+', default=[''],  help='search prefix')     
-    parser.add_argument('--onvideo', action='store_true',  help='Plot on tracks on video')    
     parser.add_argument('--minlen', type=int, default=1, help='Minimum length of track (in observations)')
     parser.add_argument('--radius', type=float, default=50, help='Association radius')
     parser.add_argument('--lost', type=int, default=0, help='Seconds lost but still continue track')
     parser.add_argument('--minseq', type=int, default=5, help='Minimum sequential seconds for valid_start')
     parser.add_argument('--outfps', type=float, default=5., help='How fast to play video in fps')
-    parser.add_argument('--vidout', action='store_true',  help='Store video')    
-    parser.add_argument('--outfolder', type=str, default='/mnt/scratch/'+os.environ["USER"]+"/trackvid",  help='Output folder for video tracks')    
-    parser.add_argument('--showanno', action='store_true',  help='Plot annotations')    
+    parser.add_argument('--onvideo', action='store_true',  help='Plot on tracks on video')    
+    parser.add_argument('--vidtrackdir', type=str, default=None,  help='Save tracks on videos')    
+    parser.add_argument('--hideanno', action='store_true',  help='Hide image annotations')    
     parser.add_argument('--start', type=int, default=0, help='Start frame')
     
     args = parser.parse_args()
@@ -411,5 +424,3 @@ if __name__ == '__main__':
     for prefix in args.prefix:
         track_detections(args, prefix)
 
-
-    # python track_eggs.py 53 --prefix ch4_0729 --minlen 4 --playrate 10 --onvideo --vidout
