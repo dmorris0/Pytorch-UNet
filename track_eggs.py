@@ -25,8 +25,6 @@ import json
 import argparse
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
-from timeit import default_timer as timer
-from time import sleep
 
 from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
@@ -92,14 +90,16 @@ def plot_all_tracks(tracks, annotations, frame=None, title=None, radius=None):
         track.plot(ax, vis_color=color, nonvis_color=color, radius=radius)
     ax.set_xlabel(r'$x$', labelpad=6)            
     ax.set_ylabel(r'$y$', labelpad=6)            
-    #ax.invert_yaxis()
     ax.axis('equal')
     ax.set_title(title)
     if frame is None:
+        ax.invert_yaxis()
         ax.set_xlim( (0,1920))
         ax.set_ylim( (1080,0))
     for anno in annotations:
+        # These are manual annotations just to give insight into which tracks are probably real
         for t in anno['targets']:
+            # Draw big white circle around them
             ax.plot(t[0],t[1],marker='o',markersize=20,color='w',fillstyle='none')
     ax.axis('tight')
 
@@ -236,6 +236,10 @@ class PlotTracksOnVideo:
         return True
 
 def next_frame( egg_detections ):
+    # The index is the frame number / time in seconds of the detections
+    # Here, collect all detections having index equal to the first index in egg_detections
+    # This is the next frame.
+    # Then remove these detections from egg_detections
     if len(egg_detections['indices'])==0:
         return None, egg_detections
     else:
@@ -269,6 +273,7 @@ def kill_old_tracks(tracks_current, fnum, lost_sec):
     return keep, done
 
 def track_eggs( eggs_detections, params, big_value=1e10 ):
+    # Here is the main tracking loop
     tracks_current = []
     tracks_done = []
     id = 0
