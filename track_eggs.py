@@ -278,31 +278,38 @@ def track_eggs( eggs_detections, params, big_value=1e10 ):
         # Now that we know the frame number, remove old tracks:
         tracks_current, old = kill_old_tracks(tracks_current, frame['fnum'], params.lost_sec)
         tracks_done = tracks_done + old
-        if len(tracks_current):
+        if len(tracks_current):  # If we have current tracks, then find associations with detections
             # Get coordinates of tracked eggs
             xy = np.array(list(map(lambda tr: [tr.x[-1],tr.y[-1]], tracks_current)))
             # Get coordinates of new detections:
             xy_new = np.array([frame['x'],frame['y']]).T
+            # We're doing association between current tracks and new detections using 
+            # the Hungarian algorithm -- this finds best pairwise association excluding double assignments
+            # First find all the pairwise distances between tracks and detections:
             all_dists = cdist( xy, xy_new )
             # All dists greater than max should be excluded as matches 
             # Thus make their distances infeasible (otherwise will include these matches)
             all_dists[all_dists>params.radius] = big_value
+            # Now find the best pairwise association:
             row_ind, col_ind = linear_sum_assignment(all_dists)
             match_dists = all_dists[row_ind, col_ind]   
-            good = match_dists <= params.radius
+            good = match_dists <= params.radius  # Keep associations with distance apart <= params.radius
             for row, col in zip(row_ind[good], col_ind[good]):
+                # Update each track using the associated detection:
                 tracks_current[row].add( frame['fnum'], frame['scores'][col], frame['x'][col], frame['y'][col] )  
             # Get all detections that don't have good associations to tracks:       
             rest = [ele for ele in list(range(len(frame['scores']))) if ele not in set(col_ind[good])]
-            for nt in rest:
-                # Only use a detection to start a track if score > 0
-                if frame['scores'][nt] >= 0:
-                    tracks_current.append( egg_track(id,frame['fnum'],frame['scores'][nt], frame['x'][nt], frame['y'][nt], params.minseq))
-                id += 1
         else:
-            for nt in range(len(frame['scores'])):
+            # If no current tracks then start new tracks with potentially all detections
+            rest = range(len(frame['scores']))
+
+        # now start new tracks:            
+        for nt in rest:
+            # Only use a detection to start a track if score > 0
+            if frame['scores'][nt] >= 0:
                 tracks_current.append( egg_track(id,frame['fnum'],frame['scores'][nt], frame['x'][nt], frame['y'][nt], params.minseq))
                 id += 1
+                
     return tracks_done, tracks_current
 
 class track_params:
