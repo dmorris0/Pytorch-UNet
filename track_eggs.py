@@ -376,7 +376,6 @@ def track_detections(args, prefix):
         start_id += 1   # iterate ID so that it is prepared to start new track
         # keep tracks of minimum length:
         tracks = [x for x in tracks_d + tracks_c if len(x.score)>= args.minlen]
-        print(tracks)
         annotations = load_annotations(path, args.imagedir)
         print(f'Loaded {len(annotations)} annotations for {path.name}')
         #nextannotations = load_annotations(nextpath, args.imagedir)
