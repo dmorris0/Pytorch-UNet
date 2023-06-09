@@ -61,18 +61,26 @@ class egg_track:
         if not self.valid_start:
             self.valid_start = self.nseq >= self.minseq
  
+    # TODO: https://iquilezles.org/articles/palettes/ cosine color palette for IDs
+    # TODO: For non-vis, how do we want to draw it?
+    def get_color(self):
+        return
+
     def plot(self, ax, vis_color, nonvis_color, radius=None, linewidth=2, frame_no=None):
         ind = 0
         vis = True
+        # Plot total path on single frame
         if frame_no is None:        
             ax.plot(self.x, self.y, linestyle='-',marker='.',color=vis_color)
         else:
+            # If track is in frame, then index is set to frame
             if frame_no in self.fnum:
                 ind = self.fnum.index(frame_no)
+            # If track not in frame, then index 
             else:
-                ind = np.max(np.array(self.fnum)<frame_no)
+                ind = np.count_nonzero(np.array(self.fnum)<frame_no) - 1  # last frame where we saw track
                 vis = False
-                print('Non-vis')                
+                print(f'Non-vis (cur frame {frame_no} | using loc from {self.fnum[ind]})')                
         color = vis_color if vis else nonvis_color                
         if not radius is None:
             circ = Circle( [self.x[ind],self.y[ind]], radius, color=color,  linewidth=linewidth, fill=False)
@@ -84,6 +92,7 @@ def plot_all_tracks(tracks, annotations, frame=None, title=None, radius=None):
     ax = fig.add_subplot(1,1,1)
     if not frame is None:
         ax.imshow(frame.permute(1,2,0).numpy())
+    # TODO: Implement consistent coloring based on ID then color them based on that
     for track in tracks:
         color = next(ax._get_lines.prop_cycler)['color']
         track.plot(ax, vis_color=color, nonvis_color=color, radius=radius)
@@ -207,6 +216,7 @@ class PlotTracksOnVideo:
                         show = self.show_image()      
                     n += 1
                     #color = next(self.ax._get_lines.prop_cycler)['color']
+
                     # Yellow if detection, orange if not
                     if self.is_annotated([track.x[0],track.y[0]],50):
                         vis_color = (1,1,0.1) 
