@@ -61,7 +61,6 @@ class egg_track:
         if not self.valid_start:
             self.valid_start = self.nseq >= self.minseq
  
-
     def plot(self, ax, vis_color, nonvis_color, radius=None, linewidth=2, frame_no=None):
         ind = 0
         vis = True
@@ -272,11 +271,12 @@ def kill_old_tracks(tracks_current, fnum, lost_sec):
             keep.append(track)
     return keep, done
 
-def track_eggs( eggs_detections, params, big_value=1e10 ):
+def track_eggs( eggs_detections, start_id, tracks_c, params, big_value=1e10 ):
     # Here is the main tracking loop
-    tracks_current = []
+    tracks_current = tracks_c
     tracks_done = []
-    id = 0
+    id = start_id
+
     while len(eggs_detections['indices']):
         # Get next frame with tracks:
         frame, eggs_detections = next_frame( eggs_detections )
@@ -315,7 +315,7 @@ def track_eggs( eggs_detections, params, big_value=1e10 ):
                 tracks_current.append( egg_track(id,frame['fnum'],frame['scores'][nt], frame['x'][nt], frame['y'][nt], params.minseq))
                 id += 1
                 
-    return tracks_done, tracks_current
+    return tracks_done, tracks_current, id
 
 class track_params:
     def __init__(self,
@@ -358,6 +358,9 @@ def track_detections(args, prefix):
         # Create output folder:
         os.makedirs(args.vidtrackdir, exist_ok=True)
 
+    tracks_c = tracks_d = []
+    start_id = 0
+
     for path, nextpath in zip(detections, detections[1:]+detections[-1:]):
         with open(str(path),'r') as f:
             eggs_detections = json.load(f)  # These are defined in run_video
@@ -369,11 +372,11 @@ def track_detections(args, prefix):
             #            'x': x,
             #            'y': y,
             #          }
-        tracks_d, tracks_c = track_eggs(eggs_detections, params)
-
+        tracks_d, tracks_c, start_id = track_eggs(eggs_detections, start_id, tracks_c, params)
+        start_id += 1   # iterate ID so that it is prepared to start new track
         # keep tracks of minimum length:
         tracks = [x for x in tracks_d + tracks_c if len(x.score)>= args.minlen]
-
+        print(tracks)
         annotations = load_annotations(path, args.imagedir)
         print(f'Loaded {len(annotations)} annotations for {path.name}')
         #nextannotations = load_annotations(nextpath, args.imagedir)
