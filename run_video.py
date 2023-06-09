@@ -17,7 +17,7 @@
           --detectdir /mnt/scratch/dmorris/Hens_Detections_054
 
     --minval <val> is the threshold on whether a peak is returned as a detection.  A detection with value 0
-        has probability of sigmoid(0) = 0.5  This ia a good value for a confident detection.    
+        has probability of sigmoid(0) = 0.5  This is a good value for a confident detection.    
         The minval of -0.5 is the default, meaning we'll also save very low confidence detections (<0).  This is
         mostly for tracking eggs that are already confidently detected, similar to canny edge detection. 
 
@@ -27,7 +27,6 @@
     After this is run on videos, tracks can be made with: track_eggs.py
 
     Daniel Morris, 2023
-
 '''
 
 import os
@@ -49,7 +48,7 @@ import time
 import torch
 import torchvision
 torchvision.disable_beta_transforms_warning()
-torchvision.set_video_backend("video_reader")
+# torchvision.set_video_backend("video_reader")
 import torchvision.transforms.v2 as transforms
 
 from run_params import get_run_params, init_model
@@ -115,6 +114,7 @@ class PlotVideo:
             self.run_all()
 
     def plot_all(self):
+        """Recursive function to go frame by frame through video"""
         self.get_next()
         self.plot()
         if self.frame is None or self.next_video == False:
@@ -126,6 +126,7 @@ class PlotVideo:
             self.plot_all()
 
     def run_all(self):
+        """Saves egg detections to JSON result files from video input"""
         peak_vals, indices, x, y = [], [], [], []
 
         start_time = timer()
@@ -133,11 +134,13 @@ class PlotVideo:
             self.get_next()
             if self.frame is None:
                 break
+            
+            # Check if you found any eggs (self.peak_vals is set in get_next())
             if self.peak_vals.size:
-                peak_vals = peak_vals + self.peak_vals.tolist()
-                indices = indices + [self.inc]*self.peak_vals.size
-                x = x + self.imcoords[:,0].tolist()
-                y = y + self.imcoords[:,1].tolist()            
+                peak_vals.extend(self.peak_vals.tolist())
+                indices.extend([self.inc]*self.peak_vals.size)
+                x.extend(self.imcoords[:,0].tolist())
+                y.extend(self.imcoords[:,1].tolist())
             if self.doplot:
                 self.plot()
                 plt.show(block=False)
@@ -158,6 +161,7 @@ class PlotVideo:
             
 
     def get_next(self):
+        """Pulls next frame and detects eggs"""
         self.inc += 1
         self.frame, frame_no = self.reader.get_next()
         if self.frame is None:
