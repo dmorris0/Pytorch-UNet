@@ -218,7 +218,7 @@ class PlotTracksOnVideo:
                     #color = next(self.ax._get_lines.prop_cycler)['color']
 
                     # Yellow if detection, orange if not
-                    if self.is_annotated([track.x[0],track.y[0]],50):
+                    if self.is_annotated([track.x[-1],track.y[-1]],50):
                         vis_color = (1,1,0.1) 
                         nonvis_color = (1,0.5,0.1)
                     else:
