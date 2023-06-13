@@ -48,15 +48,6 @@ class egg_track:
         self.minseq = minseq
         self.nseq = 1
         self.valid_start = self.nseq >= self.minseq 
-    
-    def __str__(self):
-        return f"""-------------\n
-        Track {self.id}\n
-        Fnum: {self.fnum}\n
-        X: {self.x}\n
-        Y: {self.y}\n
-        -------------
-        """
 
     def add(self, fnum, score, x, y):
         if fnum == self.fnum[-1]+1:
@@ -405,7 +396,6 @@ def track_detections(args, prefix):
             #            'x': x,
             #            'y': y,
             #          }
-        print(f'start id for {path}: {start_id}')
         tracks_d, tracks_c, start_id = track_eggs(eggs_detections, start_id, tracks_c, params)
         start_id += 1   # iterate ID so that it is prepared to start new track
         # keep tracks of minimum length:
