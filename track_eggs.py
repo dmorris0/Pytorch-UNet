@@ -48,7 +48,16 @@ class egg_track:
         self.minseq = minseq
         self.nseq = 1
         self.valid_start = self.nseq >= self.minseq 
-            
+    
+    def __str__(self):
+        return f"""-------------\n
+        Track {self.id}\n
+        Fnum: {self.fnum}\n
+        X: {self.x}\n
+        Y: {self.y}\n
+        -------------
+        """
+
     def add(self, fnum, score, x, y):
         if fnum == self.fnum[-1]+1:
             self.nseq += 1
@@ -61,10 +70,17 @@ class egg_track:
         if not self.valid_start:
             self.valid_start = self.nseq >= self.minseq
  
-    # TODO: https://iquilezles.org/articles/palettes/ cosine color palette for IDs
-    # TODO: For non-vis, how do we want to draw it?
-    def get_color(self):
-        return
+    # https://iquilezles.org/articles/palettes/ cosine color palette for IDs
+    # TODO: How should we visualize non-vis?
+    def get_color(self, vis=True):
+        a = np.array([0.5, 0.5, 0.5])
+        b = np.array([0.5, 0.5, 0.5])
+        c = np.array([1.0, 1.0, 1.0])
+        d = np.array([0.00, 0.33, 0.67])
+        # This is how often colors will repeat, lower the color the more variation between tracks
+        CYCLE_PERIOD = 20.0
+
+        return tuple(a + b * np.cos(2*np.pi*(c*self.id/20+d)))
 
     def plot(self, ax, vis_color, nonvis_color, radius=None, linewidth=2, frame_no=None):
         ind = 0
@@ -76,14 +92,14 @@ class egg_track:
             # If track is in frame, then index is set to frame
             if frame_no in self.fnum:
                 ind = self.fnum.index(frame_no)
-            # If track not in frame, then index 
+            # If track not in frame, then index is last frame where we saw
             else:
                 ind = np.count_nonzero(np.array(self.fnum)<frame_no) - 1  # last frame where we saw track
                 vis = False
                 print(f'Non-vis (cur frame {frame_no} | using loc from {self.fnum[ind]})')                
         color = vis_color if vis else nonvis_color                
         if not radius is None:
-            circ = Circle( [self.x[ind],self.y[ind]], radius, color=color,  linewidth=linewidth, fill=False)
+            circ = Circle( [self.x[ind],self.y[ind]], radius, color=self.get_color(),  linewidth=linewidth, fill=False)
             ax.add_patch(circ)
         # ax.text(self.x[ind]+10, self.y[ind], str(len(self.score)), color=color, fontsize=12)
 
@@ -208,14 +224,20 @@ class PlotTracksOnVideo:
                 plt.close(self.fig)
                 return False
             n=0
+
             for track in self.tracks:
+                # Don't print routes that have not started yet
+                # Since they're sorted by finishing frame, there might be valid ones after
                 if track.fnum[0] > self.frame_no:
-                    break
+                    continue
+                
+                # Ensure that the track ends on or after the current frame
                 if track.fnum[-1] >= self.frame_no:
                     if n==0 and not self.show_all_frames:
                         show = self.show_image()      
                     n += 1
                     #color = next(self.ax._get_lines.prop_cycler)['color']
+                    
 
                     # Yellow if detection, orange if not
                     if self.is_annotated([track.x[-1],track.y[-1]],50):
@@ -260,6 +282,7 @@ def next_frame( egg_detections ):
                 n += 1
         except StopIteration:
             pass
+
     frame = {'fnum':fnum,
              'scores':egg_detections['peak_vals'][:n],
              'x':egg_detections['x'][:n],
@@ -382,6 +405,7 @@ def track_detections(args, prefix):
             #            'x': x,
             #            'y': y,
             #          }
+        print(f'start id for {path}: {start_id}')
         tracks_d, tracks_c, start_id = track_eggs(eggs_detections, start_id, tracks_c, params)
         start_id += 1   # iterate ID so that it is prepared to start new track
         # keep tracks of minimum length:
