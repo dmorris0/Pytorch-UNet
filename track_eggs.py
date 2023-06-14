@@ -64,14 +64,17 @@ class egg_track:
     # https://iquilezles.org/articles/palettes/ cosine color palette for IDs
     # TODO: How should we visualize non-vis?
     def get_color(self, vis=True):
+        if not vis:
+            return (0, 0, 0)
+        
         a = np.array([0.5, 0.5, 0.5])
         b = np.array([0.5, 0.5, 0.5])
         c = np.array([1.0, 1.0, 1.0])
         d = np.array([0.00, 0.33, 0.67])
-        # This is how often colors will repeat, lower the color the more variation between tracks
-        CYCLE_PERIOD = 20.0
+        # This is how often colors will repeat, lower the cycle period, the more variation between tracks
+        CYCLE_PERIOD = 5.0
 
-        return tuple(a + b * np.cos(2*np.pi*(c*self.id/20+d)))
+        return tuple(a + b * np.cos(2*np.pi*(c*self.id/CYCLE_PERIOD+d)))
 
     def plot(self, ax, vis_color, nonvis_color, radius=None, linewidth=2, frame_no=None):
         ind = 0
@@ -90,7 +93,7 @@ class egg_track:
                 print(f'Non-vis (cur frame {frame_no} | using loc from {self.fnum[ind]})')                
         color = vis_color if vis else nonvis_color                
         if not radius is None:
-            circ = Circle( [self.x[ind],self.y[ind]], radius, color=self.get_color(),  linewidth=linewidth, fill=False)
+            circ = Circle( [self.x[ind],self.y[ind]], radius, color=self.get_color(vis),  linewidth=linewidth, fill=False)
             ax.add_patch(circ)
         # ax.text(self.x[ind]+10, self.y[ind], str(len(self.score)), color=color, fontsize=12)
 
@@ -190,7 +193,7 @@ class PlotTracksOnVideo:
 
     def show_image(self):
         frame,_ = self.reader.get_nth(self.frame_no)
-        if frame is None:
+        if frame is None: # debugging todo remove the or  or self.frame_no >= 400
             self.done = True
             plt.close(self.fig)
             return False
@@ -307,6 +310,14 @@ def track_eggs( eggs_detections, start_id, tracks_c, params, big_value=1e10 ):
         # Now that we know the frame number, remove old tracks:
         tracks_current, old = kill_old_tracks(tracks_current, frame['fnum'], params.lost_sec)
         tracks_done = tracks_done + old
+
+        if 350 < frame['fnum'] <= 400:
+            print("-------------")
+            print(f"Frame {frame['fnum']}")
+            # print(frame['x'])
+            # print(frame['y'])
+            # print(frame['scores'])
+
         if len(tracks_current):  # If we have current tracks, then find associations with detections
             # Get coordinates of tracked eggs
             xy = np.array(list(map(lambda tr: [tr.x[-1],tr.y[-1]], tracks_current)))
@@ -332,10 +343,15 @@ def track_eggs( eggs_detections, start_id, tracks_c, params, big_value=1e10 ):
             # If no current tracks then start new tracks with potentially all detections
             rest = range(len(frame['scores']))
 
+        if 350 < frame['fnum'] <= 400:
+            for det in rest:
+                print(f"({frame['x'][det]}, {frame['y'][det]}): {frame['scores'][det]}")
+
         # now start new tracks:            
         for nt in rest:
             # Only use a detection to start a track if score > 0
-            if frame['scores'][nt] >= 0:
+            # Plotted histogram, and it seems that 55% confidence or 56.8% confidence
+            if frame['scores'][nt] >= 0.275:
                 tracks_current.append( egg_track(id,frame['fnum'],frame['scores'][nt], frame['x'][nt], frame['y'][nt], params.minseq))
                 id += 1
                 
@@ -400,6 +416,13 @@ def track_detections(args, prefix):
         start_id += 1   # iterate ID so that it is prepared to start new track
         # keep tracks of minimum length:
         tracks = [x for x in tracks_d + tracks_c if len(x.score)>= args.minlen]
+        print("----------- TRACKS -------------") # todo remove
+        for track in tracks:
+            print("-----------------")
+            print(f"Track {track.id}, {track.fnum[0]} - {track.fnum[-1]}")
+            print(f"x: {track.x[-1]}")
+            print(f"y: {track.y[-1]}")
+
         annotations = load_annotations(path, args.imagedir)
         print(f'Loaded {len(annotations)} annotations for {path.name}')
         #nextannotations = load_annotations(nextpath, args.imagedir)
