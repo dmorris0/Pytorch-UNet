@@ -245,12 +245,13 @@ class PlotTracksOnVideo:
             self.frame_no += 1
             if self.show_all_frames:
                 show = self.show_image()
-            # TODO: Can no longer pop because this will mess up tracks
-            while len(self.tracks) and self.tracks[0].fnum[self.vid_i][-1] < self.frame_no:
-                self.tracks.pop(0)  # Delete tracks that are passed
+            # Can no longer pop because this will mess up tracks
+            # while len(self.tracks) and self.tracks[0].fnum[self.vid_i][-1] < self.frame_no:
+            #     self.tracks.pop(0)  # Delete tracks that are passed
             # TODO: Find some sort of starting index sliding window method to be more efficient
-
-            if len(self.tracks)==0:
+            # TODO: Find some other way to track whether or not we're done
+            # if len(self.tracks)==0:
+            if self.tracks[-1].fnum[self.vid_i][-1] == self.frame_no:
                 self.done = True
                 plt.close(self.fig)
                 return False
@@ -336,7 +337,7 @@ def kill_old_tracks(tracks_current, vid_i, fnum, lost_sec):
             else:
                 keep.append(track)
         # If last frame was seen in last video
-        elif last_vid == vid_i:
+        elif last_vid == vid_i - 1:
             frames_from_last = 1799 - track.fnum[last_vid][-1]
             # Frames lost in last video and frames lost in this one so far
             if fnum + frames_from_last > time_for_lost + 1:
@@ -359,8 +360,10 @@ def track_eggs(vid_i, eggs_detections, tracks_c, params, big_value=1e10):
         # Get next frame with tracks:
         frame, eggs_detections = next_frame( eggs_detections )
         # Now that we know the frame number, remove old tracks:
+
         tracks_current, old = kill_old_tracks(tracks_current, vid_i, frame['fnum'], params.lost_sec)
         tracks_done = tracks_done + old
+
 
         if len(tracks_current):  # If we have current tracks, then find associations with detections
             # Get coordinates of tracked eggs
@@ -426,6 +429,12 @@ def load_annotations(video_name, image_folder):
             annotations.append( json.load(f) )
     return annotations
 
+def track_length(track):
+    frames_present = 0
+    for frames in track.fnum.values():
+        frames_present += len(frames)
+    return frames_present
+
 def track_detections(args, prefix):
     """General function to track detections in videos"""
     params = track_params(args.run, 
@@ -448,6 +457,7 @@ def track_detections(args, prefix):
         # Create output folder:
         os.makedirs(args.vidtrackdir, exist_ok=True)
 
+    tracks = []
     tracks_c = tracks_d = []
     start_id = 0
 
@@ -467,22 +477,36 @@ def track_detections(args, prefix):
         tracks_d, tracks_c = track_eggs(vid_i, eggs_detections, tracks_c, params)
 
         # keep tracks of minimum length:
-        # TODO: tracks has to extend past one video so initialize before then extend
-        tracks = [x for x in tracks_d + tracks_c if len(x.score[vid_i]) >= args.minlen]
+        # TODO: This doesn't work because it could add current tracks over and over again
+        # only plot tracks that meet length requirement and have frames in this video
+        tracks_to_plot = [t for t in tracks_d + tracks_c if track_length(t) >= args.minlen and vid_i in t.fnum]
 
-        # TODO: rewrite so that tracks gotten in last part of video are kept in case they are valid
-        # or 1799 - x.fnum[vid_i][-1] <= params.lost_sec
-        # Using this to keep tracks leads to a lot of garbage at the end, so just kill dead tracks
+        # store all finished tracks
+        # if we're on last video, then also store current tracks that aren't "done" to all tracks
+        # TODO: Find some way to only compute track length once instead of repeating computations
+        if vid_i < len(detections) - 1:
+            tracks.extend(t for t in tracks_d if track_length(t) >= args.minlen)
+        else:
+            tracks.extend(t for t in tracks_d + tracks_c if track_length(t) >= args.minlen)
 
-        print(f"{len(tracks)} tracks found")
-        print(f"Start id is {start_id}")
-        # recode track ids to not jump over numbers
-        for i, track in enumerate(tracks):
+        # sort tracks to add by ending frame so that you're able to tell when to end
+        tracks_to_plot = sorted(tracks_to_plot, key=lambda track: track.fnum[vid_i][-1])
+
+        # get list of tracks whose ID need to be updated (just got found this video)
+        tracks_to_update = [t for t in tracks_to_plot if len(t.fnum) == 1]
+        for i, track in enumerate(tracks_to_update):
             track.id = start_id + i
         start_id += i + 1   # iterate ID so that it is prepared to start new track
 
-        print("----------- TRACKS -------------")
-        for track in tracks:
+        # or 1799 - x.fnum[vid_i][-1] <= params.lost_sec
+        # Using this to keep tracks leads to a lot of garbage at the end, so just kill dead tracks
+
+        print(f"{len(tracks_to_plot)} tracks found")
+        print(f"Start id is {start_id}")
+        # recode track ids to not jump over numbers
+
+        print("----------- TRACKS PLOTTED -------------")
+        for track in tracks_to_plot:
             print("-----------------")
             print(f"Track {track.id}, {track.fnum[vid_i][0]} - {track.fnum[vid_i][-1]}")
             print(f"x: {track.x[vid_i][0]}")
@@ -498,7 +522,7 @@ def track_detections(args, prefix):
         if args.onvideo: 
             pt = PlotTracksOnVideo(reader, 
                                    vid_i,
-                                   tracks, 
+                                   tracks_to_plot, 
                                    annotations, 
                                    show_annotations = not args.hideanno,
                                    title = f'{video.name}, Radius: {params.radius}, Lost {params.lost_sec} (sec)',
@@ -514,7 +538,7 @@ def track_detections(args, prefix):
         else:
             # Plot tracks on first frame of video:
             frame, _ = reader.get_next()
-            plot_all_tracks(tracks, annotations, vid_i, frame,
+            plot_all_tracks(tracks_to_plot, annotations, vid_i, frame,
                             f'Tracks run: {params.run}, Radius: {params.radius}, Lost {params.lost_sec} (sec)', )
 
             plt.show()
