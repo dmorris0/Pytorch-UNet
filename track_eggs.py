@@ -62,7 +62,6 @@ class egg_track:
             self.valid_start = self.nseq >= self.minseq
  
     # https://iquilezles.org/articles/palettes/ cosine color palette for IDs
-    # TODO: How should we visualize non-vis?
     def get_color(self, vis=True):
         if not vis:
             return (0, 0, 0)
@@ -90,10 +89,11 @@ class egg_track:
             else:
                 ind = np.count_nonzero(np.array(self.fnum)<frame_no) - 1  # last frame where we saw track
                 vis = False
-                print(f'Non-vis (cur frame {frame_no} | using loc from {self.fnum[ind]})')                
+                # print(f'Non-vis (cur frame {frame_no} | using loc from {self.fnum[ind]})')                
         color = vis_color if vis else nonvis_color                
         if not radius is None:
             circ = Circle( [self.x[ind],self.y[ind]], radius, color=self.get_color(vis),  linewidth=linewidth, fill=False)
+            plt.text(self.x[ind] + 10, self.y[ind] - 10, self.id, color=self.get_color(vis))
             ax.add_patch(circ)
         # ax.text(self.x[ind]+10, self.y[ind], str(len(self.score)), color=color, fontsize=12)
 
@@ -193,7 +193,7 @@ class PlotTracksOnVideo:
 
     def show_image(self):
         frame,_ = self.reader.get_nth(self.frame_no)
-        if frame is None: # debugging todo remove the or  or self.frame_no >= 400
+        if frame is None:
             self.done = True
             plt.close(self.fig)
             return False
@@ -288,6 +288,7 @@ def next_frame( egg_detections ):
     egg_detections['y'] = egg_detections['y'][n:]
     return frame, egg_detections
 
+# TODO: Rewrite to take into account pushover from last video
 def kill_old_tracks(tracks_current, fnum, lost_sec):
     keep, done = [], []
     for track in tracks_current:
@@ -298,11 +299,11 @@ def kill_old_tracks(tracks_current, fnum, lost_sec):
             keep.append(track)
     return keep, done
 
-def track_eggs( eggs_detections, start_id, tracks_c, params, big_value=1e10 ):
+def track_eggs( eggs_detections, tracks_c, params, big_value=1e10 ):
     # Here is the main tracking loop
     tracks_current = tracks_c
     tracks_done = []
-    id = start_id
+    id = 0
 
     while len(eggs_detections['indices']):
         # Get next frame with tracks:
@@ -311,28 +312,40 @@ def track_eggs( eggs_detections, start_id, tracks_c, params, big_value=1e10 ):
         tracks_current, old = kill_old_tracks(tracks_current, frame['fnum'], params.lost_sec)
         tracks_done = tracks_done + old
 
-        if 350 < frame['fnum'] <= 400:
-            print("-------------")
-            print(f"Frame {frame['fnum']}")
-            # print(frame['x'])
-            # print(frame['y'])
-            # print(frame['scores'])
-
         if len(tracks_current):  # If we have current tracks, then find associations with detections
             # Get coordinates of tracked eggs
             xy = np.array(list(map(lambda tr: [tr.x[-1],tr.y[-1]], tracks_current)))
             # Get coordinates of new detections:
-            xy_new = np.array([frame['x'],frame['y']]).T
+            # Set threshold to only take probable points 0.08 (52% conf)
+            # New threshold is 0.114 (52.8% conf)
+            indices = np.where(np.array(frame['scores']) >= 0.114)
+            filtered_x = np.array(frame['x'])[indices]
+            filtered_y = np.array(frame['y'])[indices]
+            xy_new = np.array([filtered_x, filtered_y]).T
             # We're doing association between current tracks and new detections using 
             # the Hungarian algorithm -- this finds best pairwise association excluding double assignments
             # First find all the pairwise distances between tracks and detections:
             all_dists = cdist( xy, xy_new )
             # All dists greater than max should be excluded as matches 
             # Thus make their distances infeasible (otherwise will include these matches)
-            all_dists[all_dists>params.radius] = big_value
+
+            # Scaled radius that takes into account confidence
+            # For now, scale against 50% confidence
+            # for col in range(all_dists.shape[1]):
+            #     detection_conf = 1/(1+np.exp(frame['scores'][col]))
+            #     # Set floor radius to 10, for now this is experimental number and 6 is also experimental
+            #     conf_scale = 10 * (detection_conf - 0.5) + 1
+            #     conf_scale = max(conf_scale, 0.1)
+            #     if 215 <= frame['fnum'] <= 240:
+            #         print(detection_conf, conf_scale, params.radius*conf_scale)
+            #     all_dists[all_dists>params.radius*conf_scale] = big_value
+
             # Now find the best pairwise association:
             row_ind, col_ind = linear_sum_assignment(all_dists)
             match_dists = all_dists[row_ind, col_ind]   
+
+            all_dists[all_dists>params.radius] = big_value
+
             good = match_dists <= params.radius  # Keep associations with distance apart <= params.radius
             for row, col in zip(row_ind[good], col_ind[good]):
                 # Update each track using the associated detection:
@@ -343,19 +356,16 @@ def track_eggs( eggs_detections, start_id, tracks_c, params, big_value=1e10 ):
             # If no current tracks then start new tracks with potentially all detections
             rest = range(len(frame['scores']))
 
-        if 350 < frame['fnum'] <= 400:
-            for det in rest:
-                print(f"({frame['x'][det]}, {frame['y'][det]}): {frame['scores'][det]}")
-
         # now start new tracks:            
         for nt in rest:
             # Only use a detection to start a track if score > 0
             # Plotted histogram, and it seems that 55% confidence or 56.8% confidence
-            if frame['scores'][nt] >= 0.275:
+            # 0.266 (56.6% conf) is max diff between true pos and false pos
+            if frame['scores'][nt] >= 0.266:
                 tracks_current.append( egg_track(id,frame['fnum'],frame['scores'][nt], frame['x'][nt], frame['y'][nt], params.minseq))
                 id += 1
                 
-    return tracks_done, tracks_current, id
+    return tracks_done, tracks_current
 
 class track_params:
     def __init__(self,
@@ -412,16 +422,25 @@ def track_detections(args, prefix):
             #            'x': x,
             #            'y': y,
             #          }
-        tracks_d, tracks_c, start_id = track_eggs(eggs_detections, start_id, tracks_c, params)
-        start_id += 1   # iterate ID so that it is prepared to start new track
+        tracks_d, tracks_c = track_eggs(eggs_detections, tracks_c, params)
+
         # keep tracks of minimum length:
+        # TODO: rewrite so that tracks gotten in last part of video are kept in case they are valid
         tracks = [x for x in tracks_d + tracks_c if len(x.score)>= args.minlen]
-        print("----------- TRACKS -------------") # todo remove
+
+        print(f"{len(tracks)} tracks found")
+        print(f"Start id is {start_id}")
+        # recode track ids to not jump over numbers
+        for i, track in enumerate(tracks):
+            track.id = start_id + i
+        start_id += i + 1   # iterate ID so that it is prepared to start new track
+
+        print("----------- TRACKS -------------")
         for track in tracks:
             print("-----------------")
             print(f"Track {track.id}, {track.fnum[0]} - {track.fnum[-1]}")
-            print(f"x: {track.x[-1]}")
-            print(f"y: {track.y[-1]}")
+            print(f"x: {track.x[0]}")
+            print(f"y: {track.y[0]}")
 
         annotations = load_annotations(path, args.imagedir)
         print(f'Loaded {len(annotations)} annotations for {path.name}')
