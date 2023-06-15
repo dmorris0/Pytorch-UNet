@@ -98,7 +98,7 @@ class egg_track:
 
         return tuple(a + b * np.cos(2*np.pi*(c*self.id/CYCLE_PERIOD+d)))
 
-    def plot(self, ax, vid_i, vis_color, nonvis_color, radius=None, linewidth=2, frame_no=None):
+    def plot(self, ax, vid_i, radius=None, linewidth=2, frame_no=None):
         ind = 0
         vis = True
         # Plot total path on single frame
@@ -115,13 +115,12 @@ class egg_track:
             else:
                 # If track hasn't been seen in this video, take last frame from last video
                 vis = False
-                if frame_no < self.x[vid_i][0]:
+                if frame_no < self.fnum[vid_i][0]:
                     loc = [self.x[vid_i - 1][-1], self.y[vid_i - 1][-1]]
                 else:
-                    ind = np.count_nonzero(np.array(self.fnum)<frame_no) - 1  # last frame where we saw track
+                    ind = np.count_nonzero(np.array(self.fnum[vid_i])<frame_no) - 1  # last frame where we saw track
                     loc = [self.x[vid_i][ind], self.y[vid_i][ind]]
                 # print(f'Non-vis (cur frame {frame_no} | using loc from {self.fnum[ind]})')                
-        color = vis_color if vis else nonvis_color                
         if not radius is None:
             circ = Circle(loc, radius, color=self.get_color(vis),  linewidth=linewidth, fill=False)
             # Add ID label to video
@@ -136,8 +135,7 @@ def plot_all_tracks(tracks, annotations, vid_i, frame=None, title=None, radius=N
     # TODO: Only take tracks which have frames in this video!
     valid_tracks = [track for track in tracks if vid_i in track.x]
     for track in valid_tracks:
-        color = next(ax._get_lines.prop_cycler)['color']
-        track.plot(ax, vid_i, vis_color=color, nonvis_color=color, radius=radius)
+        track.plot(ax, vid_i, radius=radius)
     ax.set_xlabel(r'$x$', labelpad=6)            
     ax.set_ylabel(r'$y$', labelpad=6)            
     ax.axis('equal')
@@ -163,7 +161,8 @@ sim_mouse = my_event()
 class PlotTracksOnVideo:
 
     def __init__(self, 
-                 reader, 
+                 reader,
+                 vid_i, 
                  tracks, 
                  annotations=[], 
                  show_annotations = False,
@@ -172,6 +171,7 @@ class PlotTracksOnVideo:
                  store_frames = False,
                  start_frame = 0):
         self.reader = reader
+        self.vid_i = vid_i
         self.tracks = tracks
         self.fill_annotation_list(annotations)
         self.show_annotations = show_annotations
@@ -245,36 +245,38 @@ class PlotTracksOnVideo:
             self.frame_no += 1
             if self.show_all_frames:
                 show = self.show_image()
-            while len(self.tracks) and self.tracks[0].fnum[-1] < self.frame_no:
+            # TODO: Can no longer pop because this will mess up tracks
+            while len(self.tracks) and self.tracks[0].fnum[self.vid_i][-1] < self.frame_no:
                 self.tracks.pop(0)  # Delete tracks that are passed
+            # TODO: Find some sort of starting index sliding window method to be more efficient
+
             if len(self.tracks)==0:
                 self.done = True
                 plt.close(self.fig)
                 return False
             n=0
-
+            
             for track in self.tracks:
-                # Don't print routes that have not started yet
-                # Since they're sorted by finishing frame, there might be valid ones after
-                if track.fnum[0] > self.frame_no:
+                # TODO: Don't print routes that aren't in current video
+                if self.vid_i not in track.fnum:
                     continue
+
+                # Don't show routes that have not started yet
+                # Since they're sorted by finishing frame, there might be valid ones after
+                # If this is the first video the track is in, then don't show if it starts later
+                if list(track.fnum.keys())[0] == self.vid_i:
+                    if track.fnum[self.vid_i][0] > self.frame_no:
+                        continue
                 
                 # Ensure that the track ends on or after the current frame
-                if track.fnum[-1] >= self.frame_no:
+                # NOTE: With how this currently works, a track might extend into future videos and disappear for a few frames
+                # NOTE: Videos are processed in order, so can't check if this track will continue to the future
+                if track.fnum[self.vid_i][-1] >= self.frame_no:
                     if n==0 and not self.show_all_frames:
                         show = self.show_image()      
                     n += 1
-                    #color = next(self.ax._get_lines.prop_cycler)['color']
-                    
 
-                    # Yellow if detection, orange if not
-                    if self.is_annotated([track.x[-1],track.y[-1]],50):
-                        vis_color = (1,1,0.1) 
-                        nonvis_color = (1,0.5,0.1)
-                    else:
-                        vis_color = (1,0,0)
-                        nonvis_color = (1,0,0)
-                    track.plot(self.ax, vis_color=vis_color, nonvis_color=nonvis_color, radius=self.radius, linewidth=2, frame_no=self.frame_no)
+                    track.plot(self.ax, self.vid_i, radius=self.radius, linewidth=2, frame_no=self.frame_no)
             if n>0:
                 self.frames_since_lost = 0
                 if self.show_annotations:
@@ -465,6 +467,7 @@ def track_detections(args, prefix):
         tracks_d, tracks_c = track_eggs(vid_i, eggs_detections, tracks_c, params)
 
         # keep tracks of minimum length:
+        # TODO: tracks has to extend past one video so initialize before then extend
         tracks = [x for x in tracks_d + tracks_c if len(x.score[vid_i]) >= args.minlen]
 
         # TODO: rewrite so that tracks gotten in last part of video are kept in case they are valid
@@ -494,6 +497,7 @@ def track_detections(args, prefix):
             
         if args.onvideo: 
             pt = PlotTracksOnVideo(reader, 
+                                   vid_i,
                                    tracks, 
                                    annotations, 
                                    show_annotations = not args.hideanno,
