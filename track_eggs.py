@@ -38,7 +38,7 @@ image_path = str( Path(__file__).parents[1] / 'imagefunctions' )
 sys.path.append(image_path)
 from hens.VideoIOtorch import VideoReader
 
-class egg_track:
+class egg_track(object):
     def __init__(self, id, vid_i, fnum, score, x, y, minseq=5):        
         self.id = id
         self.fnum = {vid_i: [fnum]}
@@ -62,8 +62,6 @@ class egg_track:
         else:
             self.nseq = 1
 
-        # TODO: If you're continuing a track from previous video, then you should make track extend to 1799
-        # on previous video and start at 0 on this one
         last_vid = next(iter(reversed(self.fnum.keys())))
         # If the last frame seen was the current video
         if last_vid == vid_i:
@@ -106,7 +104,6 @@ class egg_track:
             ax.plot(self.x[vid_i], self.y[vid_i], linestyle='-',marker='.',color=self.get_color(vis))
         else:
             loc = []
-            # TODO: Rewrite to pull location from last video as well if needed
             # If track is in frame, then index is set to frame
             if frame_no in self.fnum[vid_i]:
                 ind = self.fnum[vid_i].index(frame_no)
@@ -127,12 +124,18 @@ class egg_track:
             plt.text(loc[0] + 10, loc[1] - 10, self.id, color=self.get_color(vis))
             ax.add_patch(circ)
 
+class TrackEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, egg_track):
+            return obj.__dict__
+        return json.JSONEncoder.default(self, obj)
+
 def plot_all_tracks(tracks, annotations, vid_i, frame=None, title=None, radius=None):
     fig = plt.figure(num='Egg Tracks', figsize=(8,4) )
     ax = fig.add_subplot(1,1,1)
     if not frame is None:
         ax.imshow(frame.permute(1,2,0).numpy())
-    # TODO: Only take tracks which have frames in this video!
+    # Only take tracks which have frames in this video!
     valid_tracks = [track for track in tracks if vid_i in track.x]
     for track in valid_tracks:
         track.plot(ax, vid_i, radius=radius)
@@ -234,8 +237,6 @@ class PlotTracksOnVideo:
         self.ax.axis('off')
         return True
 
-    # TODO: Handle if track comes from last video, you can't tell with if it goes into next or not
-    # If it does, then you can mark as non-vis and use loc from last video
     def plot_next(self, event):
         if not event is None and event.button == 1:
             return True  # Don't do anything with left button
@@ -248,17 +249,18 @@ class PlotTracksOnVideo:
             # Can no longer pop because this will mess up tracks
             # while len(self.tracks) and self.tracks[0].fnum[self.vid_i][-1] < self.frame_no:
             #     self.tracks.pop(0)  # Delete tracks that are passed
+
             # TODO: Find some sort of starting index sliding window method to be more efficient
-            # TODO: Find some other way to track whether or not we're done
             # if len(self.tracks)==0:
-            if self.tracks[-1].fnum[self.vid_i][-1] == self.frame_no:
+            # Stop video if you've finished plotting last track or there are no tracks to plot
+            if len(self.tracks) == 0 or self.tracks[-1].fnum[self.vid_i][-1] == self.frame_no:
                 self.done = True
                 plt.close(self.fig)
                 return False
             n=0
             
             for track in self.tracks:
-                # TODO: Don't print routes that aren't in current video
+                # Don't print routes that aren't in current video
                 if self.vid_i not in track.fnum:
                     continue
 
@@ -367,12 +369,12 @@ def track_eggs(vid_i, eggs_detections, tracks_c, params, big_value=1e10):
 
         if len(tracks_current):  # If we have current tracks, then find associations with detections
             # Get coordinates of tracked eggs
-            # TODO: Get last xy coordinates, could be in previous videos
+            # Get last xy coordinates, could be in previous videos
             xy = np.array(list(map(lambda tr: [tr.x[list(tr.x.keys())[-1]][-1],tr.y[list(tr.y.keys())[-1]][-1]], tracks_current)))
             # Get coordinates of new detections:
-            # Set threshold to only take probable points 0.08 (52% conf)
-            # New threshold is 0.114 (52.8% conf)
-            indices = np.where(np.array(frame['scores']) >= 0.114)
+            # Set threshold to only take probable points 0.14 (53.5% conf)
+            # These were determined from plotting true_pos vs false_pos
+            indices = np.where(np.array(frame['scores']) >= 0.14)
             filtered_x = np.array(frame['x'])[indices]
             filtered_y = np.array(frame['y'])[indices]
             xy_new = np.array([filtered_x, filtered_y]).T
@@ -402,9 +404,8 @@ def track_eggs(vid_i, eggs_detections, tracks_c, params, big_value=1e10):
         # now start new tracks:            
         for nt in rest:
             # Only use a detection to start a track if score > 0
-            # Plotted histogram, and it seems that 55% confidence or 56.8% confidence
-            # 0.266 (56.6% conf) is max diff between true pos and false pos
-            if frame['scores'][nt] >= 0.266:
+            # 0.282 (57% conf) is max diff between true pos and false pos
+            if frame['scores'][nt] >= 0.282:
                 tracks_current.append( egg_track(id, vid_i, frame['fnum'],frame['scores'][nt], frame['x'][nt], frame['y'][nt], params.minseq))
                 id += 1
                 
@@ -430,6 +431,7 @@ def load_annotations(video_name, image_folder):
     return annotations
 
 def track_length(track):
+    """General function to track how long a track is through all videos"""
     frames_present = 0
     for frames in track.fnum.values():
         frames_present += len(frames)
@@ -459,6 +461,7 @@ def track_detections(args, prefix):
 
     tracks = []
     tracks_c = tracks_d = []
+    vid_indexing = {}
     start_id = 0
 
     for vid_i, path in enumerate(detections):
@@ -473,17 +476,19 @@ def track_detections(args, prefix):
             #            'y': y,
             #          }
         
+        # map file basename to index of file for JSON later
+        vid_indexing[vid_i] = os.path.splitext(os.path.basename(path))[0]
+        
         # extract filename from path, used as key for tracks
         tracks_d, tracks_c = track_eggs(vid_i, eggs_detections, tracks_c, params)
 
         # keep tracks of minimum length:
-        # TODO: This doesn't work because it could add current tracks over and over again
         # only plot tracks that meet length requirement and have frames in this video
-        tracks_to_plot = [t for t in tracks_d + tracks_c if track_length(t) >= args.minlen and vid_i in t.fnum]
+
+        tracks_to_plot = [t for t in tracks_d + tracks_c if (track_length(t) >= args.minlen and vid_i in t.fnum)]
 
         # store all finished tracks
         # if we're on last video, then also store current tracks that aren't "done" to all tracks
-        # TODO: Find some way to only compute track length once instead of repeating computations
         if vid_i < len(detections) - 1:
             tracks.extend(t for t in tracks_d if track_length(t) >= args.minlen)
         else:
@@ -494,9 +499,12 @@ def track_detections(args, prefix):
 
         # get list of tracks whose ID need to be updated (just got found this video)
         tracks_to_update = [t for t in tracks_to_plot if len(t.fnum) == 1]
-        for i, track in enumerate(tracks_to_update):
-            track.id = start_id + i
-        start_id += i + 1   # iterate ID so that it is prepared to start new track
+
+        if len(tracks_to_update) > 0:
+            for i, track in enumerate(tracks_to_update):
+                track.id = start_id + i
+
+            start_id += i + 1   # iterate ID so that it is prepared to start new track
 
         # or 1799 - x.fnum[vid_i][-1] <= params.lost_sec
         # Using this to keep tracks leads to a lot of garbage at the end, so just kill dead tracks
@@ -511,6 +519,7 @@ def track_detections(args, prefix):
             print(f"Track {track.id}, {track.fnum[vid_i][0]} - {track.fnum[vid_i][-1]}")
             print(f"x: {track.x[vid_i][0]}")
             print(f"y: {track.y[vid_i][0]}")
+            print(f"len: {track_length(track)}")
 
         annotations = load_annotations(path, args.imagedir)
         print(f'Loaded {len(annotations)} annotations for {path.name}')
@@ -544,6 +553,17 @@ def track_detections(args, prefix):
             plt.show()
             #plt.savefig('temp.png')
             #print('Done')
+
+    # write all the tracks down to JSON file
+    # store the first frame and video where we find the egg 
+    tracks_json = []
+    tracks = sorted(tracks, key=lambda track: track.id)
+    for t in tracks:
+        first_vid = list(t.fnum.keys())[0]
+        tracks_json.append({'id': t.id, 'vid': str(vid_indexing[first_vid]), 'frame': t.fnum[first_vid][0]})
+
+    with open(prefix + '_tracks.json', "w") as f:
+        json.dump(tracks_json, f, indent=4)
 
 if __name__ == '__main__':
 
