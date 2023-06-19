@@ -536,8 +536,9 @@ def track_detections(args, prefix):
                                    show_annotations = not args.hideanno,
                                    title = f'{video.name}, Radius: {params.radius}, Lost {params.lost_sec} (sec)',
                                    store_frames = args.vidtrackdir,
-                                   start_frame = args.start)     
-            if args.vidtrackdir:
+                                   start_frame = args.start)  
+            # Ensure that video has frames to plot   
+            if args.vidtrackdir and len(pt.vidlist) > 0:
                 vid_file = str(Path(args.vidtrackdir) / video.stem) + f'_{args.minlen}_{args.minseq}.avi'
                 print('Writing:',vid_file)
                 write_video(vid_file, torch.stack(pt.vidlist), fps=args.outfps )
@@ -556,6 +557,7 @@ def track_detections(args, prefix):
 
     # write all the tracks down to JSON file
     # store the first frame and video where we find the egg 
+    # TODO: Add new argument for JSON directory
     tracks_json = []
     tracks = sorted(tracks, key=lambda track: track.id)
     for t in tracks:
