@@ -356,7 +356,7 @@ def track_eggs(vid_i, eggs_detections, tracks_c, params, big_value=1e10):
     # Here is the main tracking loop
     tracks_current = tracks_c
     tracks_done = []
-    id = 0
+    id = int(1e5) # set to large number to distinguish between real IDs and FAKE
 
     while len(eggs_detections['indices']):
         # Get next frame with tracks:
@@ -460,7 +460,8 @@ def track_detections(args, prefix):
         os.makedirs(args.vidtrackdir, exist_ok=True)
 
     tracks = []
-    tracks_c = tracks_d = []
+    tracks_c = []
+    tracks_d = []
     vid_indexing = {}
     start_id = 0
 
@@ -495,10 +496,10 @@ def track_detections(args, prefix):
             tracks.extend(t for t in tracks_d + tracks_c if track_length(t) >= args.minlen)
 
         # sort tracks to add by ending frame so that you're able to tell when to end
-        tracks_to_plot = sorted(tracks_to_plot, key=lambda track: track.fnum[vid_i][-1])
+        tracks_to_plot = sorted(tracks_to_plot, key=lambda track: track.fnum[vid_i][-1])            
 
         # get list of tracks whose ID need to be updated (just got found this video)
-        tracks_to_update = [t for t in tracks_to_plot if len(t.fnum) == 1]
+        tracks_to_update = [t for t in tracks_to_plot if t.id >= 1e5]
 
         if len(tracks_to_update) > 0:
             for i, track in enumerate(tracks_to_update):
