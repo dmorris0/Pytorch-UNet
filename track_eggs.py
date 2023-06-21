@@ -500,6 +500,8 @@ def track_detections(args, prefix):
 
         # get list of tracks whose ID need to be updated (just got found this video)
         tracks_to_update = [t for t in tracks_to_plot if t.id >= 1e5]
+        # sort list of tracks so the first ones to appear have lower IDs
+        tracks_to_update = sorted(tracks_to_update, key=lambda track: track.fnum[vid_i][0])
 
         if len(tracks_to_update) > 0:
             for i, track in enumerate(tracks_to_update):
