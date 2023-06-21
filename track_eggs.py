@@ -350,7 +350,7 @@ def mask_filter(frame, ch_num):
         raise ValueError(f"Channel {ch_num} has not had a mask created or is invalid.")
     
     # pull all valid indices
-    valid_ind = [i for i in range(len(frame['scores'])) if not mask((frame['x'][i], frame['x'][i]), ch_num)]
+    valid_ind = [i for i in range(len(frame['scores'])) if not mask((frame['x'][i], frame['y'][i]), ch_num)]
     filtered_frame = {'fnum': frame['fnum'], 
                       'scores': [],
                       'x': [],
