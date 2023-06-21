@@ -258,7 +258,7 @@ class PlotTracksOnVideo:
                 plt.close(self.fig)
                 return False
             n=0
-            
+
             for track in self.tracks:
                 # Don't print routes that aren't in current video
                 if self.vid_i not in track.fnum:
@@ -286,9 +286,12 @@ class PlotTracksOnVideo:
                     for t in self.anno_list:
                         self.ax.plot(t[0],t[1],marker='o',markersize=20,color='w',fillstyle='none')
             else:
-                if self.frames_since_lost < 10:
-                    show = self.show_image()   
-                self.frames_since_lost += 1                
+                # Show frames before any tracks appear
+                # TODO: This isn't showing frames before and I'm not sure why, it is reaching this line of code
+                show = self.show_image()
+                # if self.frames_since_lost < 10:
+                #     show = self.show_image()   
+                self.frames_since_lost += 1    
             self.ax.set_title(f'{self.title} Frame: {self.frame_no}, Tracks: {n}')
             #print(f'Frame {self.frame_no}, Tracks: {n}, Show: {show}, NF {self.frames_since_lost}')
             self.ax.axis('off')
@@ -334,7 +337,7 @@ def mask(xy, ch):
 
     # For channel 4, do simple square masking for now unless it doesn't work well
     if ch == 4:
-        return xy[0] < 1500 and xy[1] < 930
+        return xy[0] > 1500 or xy[1] > 930
 
 def mask_filter(frame, ch_num):
     """
@@ -347,7 +350,7 @@ def mask_filter(frame, ch_num):
         raise ValueError(f"Channel {ch_num} has not had a mask created or is invalid.")
     
     # pull all valid indices
-    valid_ind = [i for i in range(len(frame['scores'])) if not mask((frame['x'][i], frame['x'][i], ch_num))]
+    valid_ind = [i for i in range(len(frame['scores'])) if not mask((frame['x'][i], frame['x'][i]), ch_num)]
     filtered_frame = {'fnum': frame['fnum'], 
                       'scores': [],
                       'x': [],
@@ -602,12 +605,22 @@ def track_detections(args, prefix):
 
     # write all the tracks down to JSON file
     # store the first frame and video where we find the egg 
+    # TODO: Store JSON files in the directory specified
     if args.jsondir:
         tracks_json = []
         tracks = sorted(tracks, key=lambda track: track.id)
         for t in tracks:
-            first_vid = list(t.fnum.keys())[0]
-            tracks_json.append({'id': t.id, 'vid': str(vid_indexing[first_vid]), 'frame': t.fnum[first_vid][0]})
+            vids = list(t.fnum.keys())
+            first_vid = vids[0]
+            last_vid = vids[-1]
+            tracks_json.append({'id': t.id,
+                                'start_vid': str(vid_indexing[first_vid]),
+                                'start_f': t.fnum[first_vid][0],
+                                'start_l': (t.x[first_vid][0], t.y[first_vid][0]),
+                                'end_vid': str(vid_indexing[last_vid]),
+                                'end_f': t.fnum[last_vid][0],
+                                'end_l': (t.x[last_vid][0], t.y[last_vid][0]),
+                                })
 
         with open(prefix + '_tracks.json', "w") as f:
             json.dump(tracks_json, f, indent=4)
