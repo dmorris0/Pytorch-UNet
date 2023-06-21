@@ -558,15 +558,15 @@ def track_detections(args, prefix):
 
     # write all the tracks down to JSON file
     # store the first frame and video where we find the egg 
-    # TODO: Add new argument for JSON directory
-    tracks_json = []
-    tracks = sorted(tracks, key=lambda track: track.id)
-    for t in tracks:
-        first_vid = list(t.fnum.keys())[0]
-        tracks_json.append({'id': t.id, 'vid': str(vid_indexing[first_vid]), 'frame': t.fnum[first_vid][0]})
+    if args.jsondir:
+        tracks_json = []
+        tracks = sorted(tracks, key=lambda track: track.id)
+        for t in tracks:
+            first_vid = list(t.fnum.keys())[0]
+            tracks_json.append({'id': t.id, 'vid': str(vid_indexing[first_vid]), 'frame': t.fnum[first_vid][0]})
 
-    with open(prefix + '_tracks.json', "w") as f:
-        json.dump(tracks_json, f, indent=4)
+        with open(prefix + '_tracks.json', "w") as f:
+            json.dump(tracks_json, f, indent=4)
 
 if __name__ == '__main__':
 
@@ -582,7 +582,8 @@ if __name__ == '__main__':
     parser.add_argument('--minseq', type=int, default=5, help='Minimum sequential seconds for valid_start')
     parser.add_argument('--outfps', type=float, default=5., help='How fast to play video in fps')
     parser.add_argument('--onvideo', action='store_true',  help='Plot on tracks on video')    
-    parser.add_argument('--vidtrackdir', type=str, default=None,  help='Save tracks on videos')    
+    parser.add_argument('--vidtrackdir', type=str, default=None,  help='Save tracks on videos')
+    parser.add_argument('--jsondir', type=str, default=None, help='Save tracks found to JSON file')    
     parser.add_argument('--hideanno', action='store_true',  help='Hide image annotations')    
     parser.add_argument('--start', type=int, default=0, help='Start frame')
     
