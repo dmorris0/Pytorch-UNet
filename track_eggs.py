@@ -327,6 +327,39 @@ def next_frame( egg_detections ):
     egg_detections['y'] = egg_detections['y'][n:]
     return frame, egg_detections
 
+def mask(xy, ch):
+    """
+    Returns true if a point falls under a certain mask for a channel
+    """
+
+    # For channel 4, do simple square masking for now unless it doesn't work well
+    if ch == 4:
+        return xy[0] < 1500 and xy[1] < 930
+
+def mask_filter(frame, ch_num):
+    """
+    Throws out all detections that are in invalid areas.
+
+    Unique mask per channel and will raise exception if mask hasn't been created for channel yet
+    """
+    val_channels = [4]
+    if ch_num not in val_channels:
+        raise ValueError(f"Channel {ch_num} has not had a mask created or is invalid.")
+    
+    # pull all valid indices
+    valid_ind = [i for i in range(len(frame['scores'])) if not mask((frame['x'][i], frame['x'][i], ch_num))]
+    filtered_frame = {'fnum': frame['fnum'], 
+                      'scores': [],
+                      'x': [],
+                      'y': []}
+    for i in valid_ind:
+        filtered_frame['scores'].append(frame['scores'][i])
+        filtered_frame['x'].append(frame['x'][i])
+        filtered_frame['y'].append(frame['y'][i])
+
+    return filtered_frame
+
+
 def kill_old_tracks(tracks_current, vid_i, fnum, lost_sec):
     keep, done = [], []
     for track in tracks_current:
@@ -352,7 +385,7 @@ def kill_old_tracks(tracks_current, vid_i, fnum, lost_sec):
 
     return keep, done
 
-def track_eggs(vid_i, eggs_detections, tracks_c, params, big_value=1e10):
+def track_eggs(vid_i, ch_num, eggs_detections, tracks_c, params, big_value=1e10):
     # Here is the main tracking loop
     tracks_current = tracks_c
     tracks_done = []
@@ -361,8 +394,11 @@ def track_eggs(vid_i, eggs_detections, tracks_c, params, big_value=1e10):
     while len(eggs_detections['indices']):
         # Get next frame with tracks:
         frame, eggs_detections = next_frame( eggs_detections )
-        # Now that we know the frame number, remove old tracks:
 
+        # Filter out eggs which are in separate pens or occluded by pen
+        frame = mask_filter(frame, ch_num)
+
+        # Now that we know the frame number, remove old tracks:
         tracks_current, old = kill_old_tracks(tracks_current, vid_i, frame['fnum'], params.lost_sec)
         tracks_done = tracks_done + old
 
@@ -477,11 +513,17 @@ def track_detections(args, prefix):
             #            'y': y,
             #          }
         
+        # Pull channel number
+        file = os.path.basename(path)
+        f_name = file.split('.')[0]
+        c_name = f_name.split('_')[0]
+        c_num = int(c_name[2:])
+        
         # map file basename to index of file for JSON later
-        vid_indexing[vid_i] = os.path.splitext(os.path.basename(path))[0]
+        vid_indexing[vid_i] = f_name
         
         # extract filename from path, used as key for tracks
-        tracks_d, tracks_c = track_eggs(vid_i, eggs_detections, tracks_c, params)
+        tracks_d, tracks_c = track_eggs(vid_i, c_num, eggs_detections, tracks_c, params)
 
         # keep tracks of minimum length:
         # only plot tracks that meet length requirement and have frames in this video
