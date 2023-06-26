@@ -83,18 +83,23 @@ class egg_track(object):
             self.valid_start = self.nseq >= self.minseq
  
     # https://iquilezles.org/articles/palettes/ cosine color palette for IDs
-    def get_color(self, vis=True):
+    def get_color(id, vis=True):
         if not vis:
             return (0, 0, 0)
         
-        a = np.array([0.5, 0.5, 0.5])
-        b = np.array([0.5, 0.5, 0.5])
+        a = np.array([0.9, 0.7, 0.7])
+        b = np.array([0.4, 0.4, 0.4])
         c = np.array([1.0, 1.0, 1.0])
-        d = np.array([0.00, 0.33, 0.67])
-        # This is how often colors will repeat, lower the cycle period, the more variation between tracks
-        CYCLE_PERIOD = 5.0
+        d = np.array([0.0, 0.33, 0.67])
 
-        return tuple(a + b * np.cos(2*np.pi*(c*self.id/CYCLE_PERIOD+d)))
+        # This is how often colors will repeat, lower the cycle period, the more variation between tracks
+        CYCLE_PERIOD = 12
+
+        normal_id = (id % CYCLE_PERIOD)/float(CYCLE_PERIOD)
+        c = a + b * np.cos(2*np.pi*(c*normal_id+d))
+        c = np.clip(c, 0, 1)
+        
+        return tuple(c)
 
     def plot(self, ax, vid_i, radius=None, linewidth=2, frame_no=None):
         ind = 0
@@ -296,7 +301,7 @@ class PlotTracksOnVideo:
             #print(f'Frame {self.frame_no}, Tracks: {n}, Show: {show}, NF {self.frames_since_lost}')
             self.ax.axis('off')
             self.fig.canvas.draw()
-            self.fig.canvas.flush_events()            
+            self.fig.canvas.flush_events()     
             if show and self.store_frames:
                 mat = torch.tensor(np.array(self.fig.canvas.renderer._renderer)[:,:,:3])
                 self.vidlist.append(mat)
@@ -615,11 +620,13 @@ def track_detections(args, prefix):
             last_vid = vids[-1]
             tracks_json.append({'id': t.id,
                                 'start_vid': str(vid_indexing[first_vid]),
+                                'sv_id': first_vid,
                                 'start_f': t.fnum[first_vid][0],
                                 'start_l': (t.x[first_vid][0], t.y[first_vid][0]),
                                 'end_vid': str(vid_indexing[last_vid]),
-                                'end_f': t.fnum[last_vid][0],
-                                'end_l': (t.x[last_vid][0], t.y[last_vid][0]),
+                                'ev_id': last_vid,
+                                'end_f': t.fnum[last_vid][-1],
+                                'end_l': (t.x[last_vid][-1], t.y[last_vid][-1]),
                                 })
 
         with open(prefix + '_tracks.json', "w") as f:
