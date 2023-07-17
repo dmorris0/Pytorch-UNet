@@ -83,7 +83,7 @@ class egg_track(object):
             self.valid_start = self.nseq >= self.minseq
  
     # https://iquilezles.org/articles/palettes/ cosine color palette for IDs
-    def get_color(id, vis=True):
+    def get_color(self, vis=True):
         if not vis:
             return (0, 0, 0)
         
@@ -95,7 +95,7 @@ class egg_track(object):
         # This is how often colors will repeat, lower the cycle period, the more variation between tracks
         CYCLE_PERIOD = 12
 
-        normal_id = (id % CYCLE_PERIOD)/float(CYCLE_PERIOD)
+        normal_id = (self.id % CYCLE_PERIOD)/float(CYCLE_PERIOD)
         c = a + b * np.cos(2*np.pi*(c*normal_id+d))
         c = np.clip(c, 0, 1)
         
@@ -337,12 +337,27 @@ def next_frame( egg_detections ):
 
 def mask(xy, ch):
     """
-    Returns true if a point falls under a certain mask for a channel
+    Returns:
+        boolean: true if a point falls under a certain mask for a channel (shouldn't be considered)
     """
+    x, y = xy
 
-    # For channel 4, do simple square masking for now unless it doesn't work well
-    if ch == 4:
-        return xy[0] > 1500 or xy[1] > 930
+    if ch == 1:
+        return not (550 <= x <= 1650 and y <= 800)
+    elif ch == 2:
+        return not (500 <= x <= 1500 and 250 <= y)
+    elif ch == 3:
+        return not (500 <= x <= 1600 and 100 <= y)
+    elif ch == 4:
+        return x > 1500 or y > 930
+    elif ch == 5:
+        return not (250 <= x <= 1300 and y <= 800)
+    elif ch == 6:
+        return not (250 <= x <= 1500 and y <= 1000)
+    elif ch == 7:
+        return not (175 <= x <= 1250 and y <= 900)
+    elif ch == 8:
+        return not (450 <= x <= 1450 and y <= 800)
 
 def mask_filter(frame, ch_num):
     """
@@ -350,7 +365,7 @@ def mask_filter(frame, ch_num):
 
     Unique mask per channel and will raise exception if mask hasn't been created for channel yet
     """
-    val_channels = [4]
+    val_channels = [1, 2, 3, 4, 5, 6, 7, 8]
     if ch_num not in val_channels:
         raise ValueError(f"Channel {ch_num} has not had a mask created or is invalid.")
     
@@ -417,8 +432,9 @@ def track_eggs(vid_i, ch_num, eggs_detections, tracks_c, params, big_value=1e10)
             xy = np.array(list(map(lambda tr: [tr.x[list(tr.x.keys())[-1]][-1],tr.y[list(tr.y.keys())[-1]][-1]], tracks_current)))
             # Get coordinates of new detections:
             # Set threshold to only take probable points 0.14 (53.5% conf)
+            # Reset threshold to 50% confidence (60% true positive rate)
             # These were determined from plotting true_pos vs false_pos
-            indices = np.where(np.array(frame['scores']) >= 0.14)
+            indices = np.where(np.array(frame['scores']) >= 0.09)
             filtered_x = np.array(frame['x'])[indices]
             filtered_y = np.array(frame['y'])[indices]
             xy_new = np.array([filtered_x, filtered_y]).T
@@ -448,8 +464,10 @@ def track_eggs(vid_i, ch_num, eggs_detections, tracks_c, params, big_value=1e10)
         # now start new tracks:            
         for nt in rest:
             # Only use a detection to start a track if score > 0
-            # 0.282 (57% conf) is max diff between true pos and false pos
-            if frame['scores'][nt] >= 0.282:
+            # 0.355 (75% conf that it is true positive) 
+            # 0.49 (80% conf that it is true positive)
+            # Trying to get lower bound for positives, so setting it to 50% chance
+            if frame['scores'][nt] >= 0.49:
                 tracks_current.append( egg_track(id, vid_i, frame['fnum'],frame['scores'][nt], frame['x'][nt], frame['y'][nt], params.minseq))
                 id += 1
                 
@@ -600,18 +618,18 @@ def track_detections(args, prefix):
                 break     
         else:
             # Plot tracks on first frame of video:
-            frame, _ = reader.get_next()
-            plot_all_tracks(tracks_to_plot, annotations, vid_i, frame,
-                            f'Tracks run: {params.run}, Radius: {params.radius}, Lost {params.lost_sec} (sec)', )
+            print("Saving to JSON!")
+            # frame, _ = reader.get_next()
+            # plot_all_tracks(tracks_to_plot, annotations, vid_i, frame,
+            #                f'Tracks run: {params.run}, Radius: {params.radius}, Lost {params.lost_sec} (sec)', )
 
-            plt.show()
+            # plt.show()
             #plt.savefig('temp.png')
             #print('Done')
 
     # write all the tracks down to JSON file
     # store the first frame and video where we find the egg 
-    # TODO: Store JSON files in the directory specified
-    if args.jsondir:
+    if args.jsondir and os.path.exists(args.jsondir):
         tracks_json = []
         tracks = sorted(tracks, key=lambda track: track.id)
         for t in tracks:
@@ -619,6 +637,7 @@ def track_detections(args, prefix):
             first_vid = vids[0]
             last_vid = vids[-1]
             tracks_json.append({'id': t.id,
+                                'init_score': t.score[first_vid][0],
                                 'start_vid': str(vid_indexing[first_vid]),
                                 'sv_id': first_vid,
                                 'start_f': t.fnum[first_vid][0],
@@ -629,7 +648,9 @@ def track_detections(args, prefix):
                                 'end_l': (t.x[last_vid][-1], t.y[last_vid][-1]),
                                 })
 
-        with open(prefix + '_tracks.json', "w") as f:
+        f_name = f'{prefix}.json'
+        fi = os.path.join(args.jsondir, f_name)
+        with open(fi, "w") as f:
             json.dump(tracks_json, f, indent=4)
 
 if __name__ == '__main__':
