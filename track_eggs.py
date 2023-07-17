@@ -38,64 +38,112 @@ image_path = str( Path(__file__).parents[1] / 'imagefunctions' )
 sys.path.append(image_path)
 from hens.VideoIOtorch import VideoReader
 
-class egg_track:
-    def __init__(self, id, fnum, score, x, y, minseq=5):        
+class egg_track(object):
+    def __init__(self, id, vid_i, fnum, score, x, y, minseq=5):        
         self.id = id
-        self.fnum = [fnum]
-        self.score = [score]
-        self.x = [x]
-        self.y = [y]
+        self.fnum = {vid_i: [fnum]}
+        self.score = {vid_i: [score]}
+        self.x = {vid_i: [x]}
+        self.y = {vid_i: [y]}
         self.minseq = minseq
         self.nseq = 1
         self.valid_start = self.nseq >= self.minseq 
-            
-    def add(self, fnum, score, x, y):
-        if fnum == self.fnum[-1]+1:
+
+    def add(self, vid_i, fnum, score, x, y):
+        # Last video this track was seen in
+        last_vid = next(iter(reversed(self.fnum.keys())))
+        # Check if last seen is in current video
+        if last_vid == vid_i:
+            if fnum == self.fnum[vid_i][-1]+1:
+                self.nseq += 1
+        # If track was last seen on last frame in last video, then continue sequence
+        elif last_vid == vid_i - 1 and fnum == 1 and self.fnum[last_vid][-1] == 1799:
             self.nseq += 1
         else:
             self.nseq = 1
-        self.fnum.append(fnum)
-        self.score.append(score)
-        self.x.append(x)
-        self.y.append(y)
+
+        last_vid = next(iter(reversed(self.fnum.keys())))
+        # If the last frame seen was the current video
+        if last_vid == vid_i:
+            self.fnum[vid_i].append(fnum)
+            self.score[vid_i].append(score)
+            self.x[vid_i].append(x)
+            self.y[vid_i].append(y)
+        # If the last frame seen was in the last video then create new entry for current video
+        elif last_vid == vid_i - 1:
+            self.fnum[vid_i] = [fnum]
+            self.score[vid_i] = [score]
+            self.x[vid_i] = [x]
+            self.y[vid_i] = [y]
+        # Lost time should not be >30 minutes, so throw an error
+        else:
+            raise ValueError("Lost time allowed > 30 minutes so track last seen over a video ago")
+
         if not self.valid_start:
             self.valid_start = self.nseq >= self.minseq
  
-    # TODO: https://iquilezles.org/articles/palettes/ cosine color palette for IDs
-    # TODO: For non-vis, how do we want to draw it?
-    def get_color(self):
-        return
+    # https://iquilezles.org/articles/palettes/ cosine color palette for IDs
+    def get_color(self, vis=True):
+        if not vis:
+            return (0, 0, 0)
+        
+        a = np.array([0.9, 0.7, 0.7])
+        b = np.array([0.4, 0.4, 0.4])
+        c = np.array([1.0, 1.0, 1.0])
+        d = np.array([0.0, 0.33, 0.67])
 
-    def plot(self, ax, vis_color, nonvis_color, radius=None, linewidth=2, frame_no=None):
+        # This is how often colors will repeat, lower the cycle period, the more variation between tracks
+        CYCLE_PERIOD = 12
+
+        normal_id = (self.id % CYCLE_PERIOD)/float(CYCLE_PERIOD)
+        c = a + b * np.cos(2*np.pi*(c*normal_id+d))
+        c = np.clip(c, 0, 1)
+        
+        return tuple(c)
+
+    def plot(self, ax, vid_i, radius=None, linewidth=2, frame_no=None):
         ind = 0
         vis = True
         # Plot total path on single frame
         if frame_no is None:        
-            ax.plot(self.x, self.y, linestyle='-',marker='.',color=vis_color)
+            ax.plot(self.x[vid_i], self.y[vid_i], linestyle='-',marker='.',color=self.get_color(vis))
         else:
+            loc = []
             # If track is in frame, then index is set to frame
-            if frame_no in self.fnum:
-                ind = self.fnum.index(frame_no)
-            # If track not in frame, then index 
+            if frame_no in self.fnum[vid_i]:
+                ind = self.fnum[vid_i].index(frame_no)
+                loc = [self.x[vid_i][ind], self.y[vid_i][ind]]
+            # If track not in frame, then index is last frame where we saw
             else:
-                ind = np.count_nonzero(np.array(self.fnum)<frame_no) - 1  # last frame where we saw track
+                # If track hasn't been seen in this video, take last frame from last video
                 vis = False
-                print(f'Non-vis (cur frame {frame_no} | using loc from {self.fnum[ind]})')                
-        color = vis_color if vis else nonvis_color                
+                if frame_no < self.fnum[vid_i][0]:
+                    loc = [self.x[vid_i - 1][-1], self.y[vid_i - 1][-1]]
+                else:
+                    ind = np.count_nonzero(np.array(self.fnum[vid_i])<frame_no) - 1  # last frame where we saw track
+                    loc = [self.x[vid_i][ind], self.y[vid_i][ind]]
+                # print(f'Non-vis (cur frame {frame_no} | using loc from {self.fnum[ind]})')                
         if not radius is None:
-            circ = Circle( [self.x[ind],self.y[ind]], radius, color=color,  linewidth=linewidth, fill=False)
+            circ = Circle(loc, radius, color=self.get_color(vis),  linewidth=linewidth, fill=False)
+            # Add ID label to video
+            plt.text(loc[0] + 10, loc[1] - 10, self.id, color=self.get_color(vis))
             ax.add_patch(circ)
-        # ax.text(self.x[ind]+10, self.y[ind], str(len(self.score)), color=color, fontsize=12)
 
-def plot_all_tracks(tracks, annotations, frame=None, title=None, radius=None):
+class TrackEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, egg_track):
+            return obj.__dict__
+        return json.JSONEncoder.default(self, obj)
+
+def plot_all_tracks(tracks, annotations, vid_i, frame=None, title=None, radius=None):
     fig = plt.figure(num='Egg Tracks', figsize=(8,4) )
     ax = fig.add_subplot(1,1,1)
     if not frame is None:
         ax.imshow(frame.permute(1,2,0).numpy())
-    # TODO: Implement consistent coloring based on ID then color them based on that
-    for track in tracks:
-        color = next(ax._get_lines.prop_cycler)['color']
-        track.plot(ax, vis_color=color, nonvis_color=color, radius=radius)
+    # Only take tracks which have frames in this video!
+    valid_tracks = [track for track in tracks if vid_i in track.x]
+    for track in valid_tracks:
+        track.plot(ax, vid_i, radius=radius)
     ax.set_xlabel(r'$x$', labelpad=6)            
     ax.set_ylabel(r'$y$', labelpad=6)            
     ax.axis('equal')
@@ -121,7 +169,8 @@ sim_mouse = my_event()
 class PlotTracksOnVideo:
 
     def __init__(self, 
-                 reader, 
+                 reader,
+                 vid_i, 
                  tracks, 
                  annotations=[], 
                  show_annotations = False,
@@ -130,6 +179,7 @@ class PlotTracksOnVideo:
                  store_frames = False,
                  start_frame = 0):
         self.reader = reader
+        self.vid_i = vid_i
         self.tracks = tracks
         self.fill_annotation_list(annotations)
         self.show_annotations = show_annotations
@@ -201,44 +251,57 @@ class PlotTracksOnVideo:
             self.frame_no += 1
             if self.show_all_frames:
                 show = self.show_image()
-            while len(self.tracks) and self.tracks[0].fnum[-1] < self.frame_no:
-                self.tracks.pop(0)  # Delete tracks that are passed
-            if len(self.tracks)==0:
+            # Can no longer pop because this will mess up tracks
+            # while len(self.tracks) and self.tracks[0].fnum[self.vid_i][-1] < self.frame_no:
+            #     self.tracks.pop(0)  # Delete tracks that are passed
+
+            # TODO: Find some sort of starting index sliding window method to be more efficient
+            # if len(self.tracks)==0:
+            # Stop video if you've finished plotting last track or there are no tracks to plot
+            if len(self.tracks) == 0 or self.tracks[-1].fnum[self.vid_i][-1] == self.frame_no:
                 self.done = True
                 plt.close(self.fig)
                 return False
             n=0
+
             for track in self.tracks:
-                if track.fnum[0] > self.frame_no:
-                    break
-                if track.fnum[-1] >= self.frame_no:
+                # Don't print routes that aren't in current video
+                if self.vid_i not in track.fnum:
+                    continue
+
+                # Don't show routes that have not started yet
+                # Since they're sorted by finishing frame, there might be valid ones after
+                # If this is the first video the track is in, then don't show if it starts later
+                if list(track.fnum.keys())[0] == self.vid_i:
+                    if track.fnum[self.vid_i][0] > self.frame_no:
+                        continue
+                
+                # Ensure that the track ends on or after the current frame
+                # NOTE: With how this currently works, a track might extend into future videos and disappear for a few frames
+                # NOTE: Videos are processed in order, so can't check if this track will continue to the future
+                if track.fnum[self.vid_i][-1] >= self.frame_no:
                     if n==0 and not self.show_all_frames:
                         show = self.show_image()      
                     n += 1
-                    #color = next(self.ax._get_lines.prop_cycler)['color']
 
-                    # Yellow if detection, orange if not
-                    if self.is_annotated([track.x[-1],track.y[-1]],50):
-                        vis_color = (1,1,0.1) 
-                        nonvis_color = (1,0.5,0.1)
-                    else:
-                        vis_color = (1,0,0)
-                        nonvis_color = (1,0,0)
-                    track.plot(self.ax, vis_color=vis_color, nonvis_color=nonvis_color, radius=self.radius, linewidth=2, frame_no=self.frame_no)
+                    track.plot(self.ax, self.vid_i, radius=self.radius, linewidth=2, frame_no=self.frame_no)
             if n>0:
                 self.frames_since_lost = 0
                 if self.show_annotations:
                     for t in self.anno_list:
                         self.ax.plot(t[0],t[1],marker='o',markersize=20,color='w',fillstyle='none')
             else:
-                if self.frames_since_lost < 10:
-                    show = self.show_image()   
-                self.frames_since_lost += 1                
+                # Show frames before any tracks appear
+                # TODO: This isn't showing frames before and I'm not sure why, it is reaching this line of code
+                show = self.show_image()
+                # if self.frames_since_lost < 10:
+                #     show = self.show_image()   
+                self.frames_since_lost += 1    
             self.ax.set_title(f'{self.title} Frame: {self.frame_no}, Tracks: {n}')
             #print(f'Frame {self.frame_no}, Tracks: {n}, Show: {show}, NF {self.frames_since_lost}')
             self.ax.axis('off')
             self.fig.canvas.draw()
-            self.fig.canvas.flush_events()            
+            self.fig.canvas.flush_events()     
             if show and self.store_frames:
                 mat = torch.tensor(np.array(self.fig.canvas.renderer._renderer)[:,:,:3])
                 self.vidlist.append(mat)
@@ -260,6 +323,7 @@ def next_frame( egg_detections ):
                 n += 1
         except StopIteration:
             pass
+
     frame = {'fnum':fnum,
              'scores':egg_detections['peak_vals'][:n],
              'x':egg_detections['x'][:n],
@@ -271,47 +335,126 @@ def next_frame( egg_detections ):
     egg_detections['y'] = egg_detections['y'][n:]
     return frame, egg_detections
 
-def kill_old_tracks(tracks_current, fnum, lost_sec):
+def mask(xy, ch):
+    """
+    Returns:
+        boolean: true if a point falls under a certain mask for a channel (shouldn't be considered)
+    """
+    x, y = xy
+
+    if ch == 1:
+        return not (550 <= x <= 1650 and y <= 800)
+    elif ch == 2:
+        return not (500 <= x <= 1500 and 250 <= y)
+    elif ch == 3:
+        return not (500 <= x <= 1600 and 100 <= y)
+    elif ch == 4:
+        return x > 1500 or y > 930
+    elif ch == 5:
+        return not (250 <= x <= 1300 and y <= 800)
+    elif ch == 6:
+        return not (250 <= x <= 1500 and y <= 1000)
+    elif ch == 7:
+        return not (175 <= x <= 1250 and y <= 900)
+    elif ch == 8:
+        return not (450 <= x <= 1450 and y <= 800)
+
+def mask_filter(frame, ch_num):
+    """
+    Throws out all detections that are in invalid areas.
+
+    Unique mask per channel and will raise exception if mask hasn't been created for channel yet
+    """
+    val_channels = [1, 2, 3, 4, 5, 6, 7, 8]
+    if ch_num not in val_channels:
+        raise ValueError(f"Channel {ch_num} has not had a mask created or is invalid.")
+    
+    # pull all valid indices
+    valid_ind = [i for i in range(len(frame['scores'])) if not mask((frame['x'][i], frame['y'][i]), ch_num)]
+    filtered_frame = {'fnum': frame['fnum'], 
+                      'scores': [],
+                      'x': [],
+                      'y': []}
+    for i in valid_ind:
+        filtered_frame['scores'].append(frame['scores'][i])
+        filtered_frame['x'].append(frame['x'][i])
+        filtered_frame['y'].append(frame['y'][i])
+
+    return filtered_frame
+
+
+def kill_old_tracks(tracks_current, vid_i, fnum, lost_sec):
     keep, done = [], []
     for track in tracks_current:
         time_for_lost = lost_sec if track.valid_start else 0
-        if fnum-track.fnum[-1] > time_for_lost + 1:
-            done.append(track)
+        last_vid = next(iter(reversed(track.fnum.keys())))
+        # If last frame seen in was in current video, then normal calculation
+        if last_vid == vid_i:
+            if fnum-track.fnum[vid_i][-1] > time_for_lost + 1:
+                done.append(track)
+            else:
+                keep.append(track)
+        # If last frame was seen in last video
+        elif last_vid == vid_i - 1:
+            frames_from_last = 1799 - track.fnum[last_vid][-1]
+            # Frames lost in last video and frames lost in this one so far
+            if fnum + frames_from_last > time_for_lost + 1:
+                done.append(track)
+            else:
+                keep.append(track)
+        # Last frame seen was in a video before the last, must be done
         else:
-            keep.append(track)
+            done.append(track)
+
     return keep, done
 
-def track_eggs( eggs_detections, start_id, tracks_c, params, big_value=1e10 ):
+def track_eggs(vid_i, ch_num, eggs_detections, tracks_c, params, big_value=1e10):
     # Here is the main tracking loop
     tracks_current = tracks_c
     tracks_done = []
-    id = start_id
+    id = int(1e5) # set to large number to distinguish between real IDs and FAKE
 
     while len(eggs_detections['indices']):
         # Get next frame with tracks:
         frame, eggs_detections = next_frame( eggs_detections )
+
+        # Filter out eggs which are in separate pens or occluded by pen
+        frame = mask_filter(frame, ch_num)
+
         # Now that we know the frame number, remove old tracks:
-        tracks_current, old = kill_old_tracks(tracks_current, frame['fnum'], params.lost_sec)
+        tracks_current, old = kill_old_tracks(tracks_current, vid_i, frame['fnum'], params.lost_sec)
         tracks_done = tracks_done + old
+
+
         if len(tracks_current):  # If we have current tracks, then find associations with detections
             # Get coordinates of tracked eggs
-            xy = np.array(list(map(lambda tr: [tr.x[-1],tr.y[-1]], tracks_current)))
+            # Get last xy coordinates, could be in previous videos
+            xy = np.array(list(map(lambda tr: [tr.x[list(tr.x.keys())[-1]][-1],tr.y[list(tr.y.keys())[-1]][-1]], tracks_current)))
             # Get coordinates of new detections:
-            xy_new = np.array([frame['x'],frame['y']]).T
+            # Set threshold to only take probable points 0.14 (53.5% conf)
+            # Reset threshold to 50% confidence (60% true positive rate)
+            # These were determined from plotting true_pos vs false_pos
+            indices = np.where(np.array(frame['scores']) >= 0.09)
+            filtered_x = np.array(frame['x'])[indices]
+            filtered_y = np.array(frame['y'])[indices]
+            xy_new = np.array([filtered_x, filtered_y]).T
             # We're doing association between current tracks and new detections using 
             # the Hungarian algorithm -- this finds best pairwise association excluding double assignments
             # First find all the pairwise distances between tracks and detections:
             all_dists = cdist( xy, xy_new )
             # All dists greater than max should be excluded as matches 
             # Thus make their distances infeasible (otherwise will include these matches)
-            all_dists[all_dists>params.radius] = big_value
+
             # Now find the best pairwise association:
             row_ind, col_ind = linear_sum_assignment(all_dists)
             match_dists = all_dists[row_ind, col_ind]   
+
+            all_dists[all_dists>params.radius] = big_value
+
             good = match_dists <= params.radius  # Keep associations with distance apart <= params.radius
             for row, col in zip(row_ind[good], col_ind[good]):
                 # Update each track using the associated detection:
-                tracks_current[row].add( frame['fnum'], frame['scores'][col], frame['x'][col], frame['y'][col] )  
+                tracks_current[row].add(vid_i, frame['fnum'], frame['scores'][col], frame['x'][col], frame['y'][col] )  
             # Get all detections that don't have good associations to tracks:       
             rest = [ele for ele in list(range(len(frame['scores']))) if ele not in set(col_ind[good])]
         else:
@@ -321,11 +464,14 @@ def track_eggs( eggs_detections, start_id, tracks_c, params, big_value=1e10 ):
         # now start new tracks:            
         for nt in rest:
             # Only use a detection to start a track if score > 0
-            if frame['scores'][nt] >= 0:
-                tracks_current.append( egg_track(id,frame['fnum'],frame['scores'][nt], frame['x'][nt], frame['y'][nt], params.minseq))
+            # 0.355 (75% conf that it is true positive) 
+            # 0.49 (80% conf that it is true positive)
+            # Trying to get lower bound for positives, so setting it to 50% chance
+            if frame['scores'][nt] >= 0.49:
+                tracks_current.append( egg_track(id, vid_i, frame['fnum'],frame['scores'][nt], frame['x'][nt], frame['y'][nt], params.minseq))
                 id += 1
                 
-    return tracks_done, tracks_current, id
+    return tracks_done, tracks_current
 
 class track_params:
     def __init__(self,
@@ -345,6 +491,13 @@ def load_annotations(video_name, image_folder):
         with open(str(anno),'r') as f:
             annotations.append( json.load(f) )
     return annotations
+
+def track_length(track):
+    """General function to track how long a track is through all videos"""
+    frames_present = 0
+    for frames in track.fnum.values():
+        frames_present += len(frames)
+    return frames_present
 
 def track_detections(args, prefix):
     """General function to track detections in videos"""
@@ -368,10 +521,13 @@ def track_detections(args, prefix):
         # Create output folder:
         os.makedirs(args.vidtrackdir, exist_ok=True)
 
-    tracks_c = tracks_d = []
+    tracks = []
+    tracks_c = []
+    tracks_d = []
+    vid_indexing = {}
     start_id = 0
 
-    for path, nextpath in zip(detections, detections[1:]+detections[-1:]):
+    for vid_i, path in enumerate(detections):
         with open(str(path),'r') as f:
             eggs_detections = json.load(f)  # These are defined in run_video
             #vid_detect = {  'video': self.reader.name,
@@ -382,18 +538,62 @@ def track_detections(args, prefix):
             #            'x': x,
             #            'y': y,
             #          }
-        tracks_d, tracks_c, start_id = track_eggs(eggs_detections, start_id, tracks_c, params)
-        start_id += 1   # iterate ID so that it is prepared to start new track
+        
+        # Pull channel number
+        file = os.path.basename(path)
+        f_name = file.split('.')[0]
+        c_name = f_name.split('_')[0]
+        c_num = int(c_name[2:])
+        
+        # map file basename to index of file for JSON later
+        vid_indexing[vid_i] = f_name
+        
+        # extract filename from path, used as key for tracks
+        tracks_d, tracks_c = track_eggs(vid_i, c_num, eggs_detections, tracks_c, params)
+
         # keep tracks of minimum length:
-        tracks = [x for x in tracks_d + tracks_c if len(x.score)>= args.minlen]
+        # only plot tracks that meet length requirement and have frames in this video
+
+        tracks_to_plot = [t for t in tracks_d + tracks_c if (track_length(t) >= args.minlen and vid_i in t.fnum)]
+
+        # store all finished tracks
+        # if we're on last video, then also store current tracks that aren't "done" to all tracks
+        if vid_i < len(detections) - 1:
+            tracks.extend(t for t in tracks_d if track_length(t) >= args.minlen)
+        else:
+            tracks.extend(t for t in tracks_d + tracks_c if track_length(t) >= args.minlen)
+
+        # sort tracks to add by ending frame so that you're able to tell when to end
+        tracks_to_plot = sorted(tracks_to_plot, key=lambda track: track.fnum[vid_i][-1])            
+
+        # get list of tracks whose ID need to be updated (just got found this video)
+        tracks_to_update = [t for t in tracks_to_plot if t.id >= 1e5]
+        # sort list of tracks so the first ones to appear have lower IDs
+        tracks_to_update = sorted(tracks_to_update, key=lambda track: track.fnum[vid_i][0])
+
+        if len(tracks_to_update) > 0:
+            for i, track in enumerate(tracks_to_update):
+                track.id = start_id + i
+
+            start_id += i + 1   # iterate ID so that it is prepared to start new track
+
+        # or 1799 - x.fnum[vid_i][-1] <= params.lost_sec
+        # Using this to keep tracks leads to a lot of garbage at the end, so just kill dead tracks
+
+        print(f"{len(tracks_to_plot)} tracks found")
+        print(f"Start id is {start_id}")
+        # recode track ids to not jump over numbers
+
+        print("----------- TRACKS PLOTTED -------------")
+        for track in tracks_to_plot:
+            print("-----------------")
+            print(f"Track {track.id}, {track.fnum[vid_i][0]} - {track.fnum[vid_i][-1]}")
+            print(f"x: {track.x[vid_i][0]}")
+            print(f"y: {track.y[vid_i][0]}")
+            print(f"len: {track_length(track)}")
+
         annotations = load_annotations(path, args.imagedir)
         print(f'Loaded {len(annotations)} annotations for {path.name}')
-        #nextannotations = load_annotations(nextpath, args.imagedir)
-        #if len(annotations)==0 or sum([len(x['targets']) for x in annotations])==0:
-        #    #If no annotations in current frame, check if there are annotations in next video:
-        #    if len(nextannotations)==0 or sum([len(x['targets']) for x in nextannotations])==0:
-        #        #If none in next too, then skip tracking
-        #        continue
 
         video = videos[video_names.index(path.name.replace('json','avi'))]
         reader = VideoReader(str(video), 1)
@@ -401,13 +601,15 @@ def track_detections(args, prefix):
             
         if args.onvideo: 
             pt = PlotTracksOnVideo(reader, 
-                                   tracks, 
+                                   vid_i,
+                                   tracks_to_plot, 
                                    annotations, 
                                    show_annotations = not args.hideanno,
                                    title = f'{video.name}, Radius: {params.radius}, Lost {params.lost_sec} (sec)',
                                    store_frames = args.vidtrackdir,
-                                   start_frame = args.start)     
-            if args.vidtrackdir:
+                                   start_frame = args.start)  
+            # Ensure that video has frames to plot   
+            if args.vidtrackdir and len(pt.vidlist) > 0:
                 vid_file = str(Path(args.vidtrackdir) / video.stem) + f'_{args.minlen}_{args.minseq}.avi'
                 print('Writing:',vid_file)
                 write_video(vid_file, torch.stack(pt.vidlist), fps=args.outfps )
@@ -416,13 +618,40 @@ def track_detections(args, prefix):
                 break     
         else:
             # Plot tracks on first frame of video:
-            frame, _ = reader.get_next()
-            plot_all_tracks(tracks, annotations, frame,
-                            f'Tracks run: {params.run}, Radius: {params.radius}, Lost {params.lost_sec} (sec)', )
+            print("Saving to JSON!")
+            # frame, _ = reader.get_next()
+            # plot_all_tracks(tracks_to_plot, annotations, vid_i, frame,
+            #                f'Tracks run: {params.run}, Radius: {params.radius}, Lost {params.lost_sec} (sec)', )
 
-            plt.show()
+            # plt.show()
             #plt.savefig('temp.png')
             #print('Done')
+
+    # write all the tracks down to JSON file
+    # store the first frame and video where we find the egg 
+    if args.jsondir and os.path.exists(args.jsondir):
+        tracks_json = []
+        tracks = sorted(tracks, key=lambda track: track.id)
+        for t in tracks:
+            vids = list(t.fnum.keys())
+            first_vid = vids[0]
+            last_vid = vids[-1]
+            tracks_json.append({'id': t.id,
+                                'init_score': t.score[first_vid][0],
+                                'start_vid': str(vid_indexing[first_vid]),
+                                'sv_id': first_vid,
+                                'start_f': t.fnum[first_vid][0],
+                                'start_l': (t.x[first_vid][0], t.y[first_vid][0]),
+                                'end_vid': str(vid_indexing[last_vid]),
+                                'ev_id': last_vid,
+                                'end_f': t.fnum[last_vid][-1],
+                                'end_l': (t.x[last_vid][-1], t.y[last_vid][-1]),
+                                })
+
+        f_name = f'{prefix}.json'
+        fi = os.path.join(args.jsondir, f_name)
+        with open(fi, "w") as f:
+            json.dump(tracks_json, f, indent=4)
 
 if __name__ == '__main__':
 
@@ -438,7 +667,8 @@ if __name__ == '__main__':
     parser.add_argument('--minseq', type=int, default=5, help='Minimum sequential seconds for valid_start')
     parser.add_argument('--outfps', type=float, default=5., help='How fast to play video in fps')
     parser.add_argument('--onvideo', action='store_true',  help='Plot on tracks on video')    
-    parser.add_argument('--vidtrackdir', type=str, default=None,  help='Save tracks on videos')    
+    parser.add_argument('--vidtrackdir', type=str, default=None,  help='Save tracks on videos')
+    parser.add_argument('--jsondir', type=str, default=None, help='Save tracks found to JSON file')    
     parser.add_argument('--hideanno', action='store_true',  help='Hide image annotations')    
     parser.add_argument('--start', type=int, default=0, help='Start frame')
     
