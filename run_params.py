@@ -915,6 +915,21 @@ def get_run_params(run):
                         dice_every_nth=1,
                         batch_size=12,
                         max_chans=96)
+        elif run==56:
+            params = Params(run, epochs = 100,
+                        comment = 'Added data from new units',
+                        data_train='Eggs_train_23-07-15.h5', 
+                        data_validation='Eggs_validation_23-07-15.h5', 
+                        data_test='Eggs_test_large_23-07-15.h5',
+                        load_opt='last',
+                        load_run=None,
+                        model_name='UNetQuarter',
+                        do_nms = True,
+                        testrepeat=0,
+                        focal_loss_ag=(0.8,4.0),              
+                        dice_every_nth=1,
+                        batch_size=12,
+                        max_chans=96)
         else:
             raise Exception(f'Undefined run: {run}')
         return params
