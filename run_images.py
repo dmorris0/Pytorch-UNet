@@ -37,23 +37,31 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Run the trained model')
     parser.add_argument('loadmodel', type=str, help='Load a trained model (.pth file)')
-    parser.add_argument('videoname', type=str, help='Video file name')
+    parser.add_argument('videoname', type=str, help='Video file name')    
+    parser.add_argument('--peakthresh', type=float, default=0, help='Peak value threshold in range -inf to inf')    
     parser.add_argument('--nth', type=int, default=15, help='Sample every nth image')    
+    parser.add_argument('--outputdir', type=str, default=None, help='If provided then saves annotated images to this')
     
     args = parser.parse_args()
 
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
+    print(f'Loading model: {args.loadmodel}')
     model = UNetQuarter(n_channels=3, n_classes=1, max_chans=96)            
 
     state_dict = torch.load(args.loadmodel, map_location=device)
     model.load_state_dict(state_dict)
     print(f'Model loaded: {args.loadmodel}')
+    if args.outputdir:
+        os.makedirs(args.outputdir, exist_ok=True)
+    else:
+        basename = None
 
     model = model.to(memory_format=torch.channels_last, device=device)
             
     vr = VideoReader(args.videoname, args.nth )        
 
+    inum=0
     while True:
         img, _ = vr.get_next()
         if img is None:
@@ -61,8 +69,14 @@ if __name__ == '__main__':
         image = img[None,...].to(device=device, dtype=torch.float32, memory_format=torch.channels_last) / 255
         
         heatmap = model(image)
-
-        plot_simple_heatmap(image[0].cpu().permute( (1,2,0)).numpy(), heatmap[0,0].cpu().detach().numpy(), figsave=None )
         
+        if args.outputdir:
+            basename = str( Path(args.outputdir) / (Path(args.videoname).stem + f'_{inum:03d}') )
+
+        plot_simple_heatmap(image[0].cpu().permute( (1,2,0)).numpy(), 
+                            heatmap[0,0].cpu().detach().numpy(), 
+                            min_peak_val=args.peakthresh, 
+                            basename = basename )
+        inum += 1        
         plt.show()
-            
+                    
